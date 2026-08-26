@@ -216,6 +216,25 @@ private slots:
         QCOMPARE(second.zoomFactor(), 1.0);
     }
 
+    void zoomToPercentSnapsAndClamps() {
+        Backend first;
+        first.zoomToPercent(137);
+        QCOMPARE(first.zoomFactor(), 1.4);
+        first.zoomToPercent(0);
+        QCOMPARE(first.zoomFactor(), 0.5);
+        first.zoomToPercent(900);
+        QCOMPARE(first.zoomFactor(), 3.0);
+        first.zoomToPercent(100);
+        QCOMPARE(first.zoomFactor(), 1.0);
+
+        first.zoomToPercent(137);
+        QCOMPARE(first.zoomFactor(), 1.4);
+        Backend second;
+        QCOMPARE(second.zoomFactor(), 1.4);
+        second.resetZoom();
+        QCOMPARE(second.zoomFactor(), 1.0);
+    }
+
     void scalesTextWithDesktopTextSize() {
         const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
         QVERIFY(!mainQmlPath.isEmpty());

@@ -185,6 +185,10 @@ void Backend::resetZoom() {
     setZoom(ViewZoom{});
 }
 
+void Backend::zoomToPercent(int percent) {
+    setZoom(ViewZoom::fromPercent(percent));
+}
+
 void Backend::setZoom(ViewZoom zoom) {
     if (zoom == m_zoom)
         return;

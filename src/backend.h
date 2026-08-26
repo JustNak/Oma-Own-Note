@@ -52,6 +52,7 @@ public:
     Q_INVOKABLE void zoomIn();
     Q_INVOKABLE void zoomOut();
     Q_INVOKABLE void resetZoom();
+    Q_INVOKABLE void zoomToPercent(int percent);
     QString themeBackground() const { return m_themeBackground; }
     QString themeForeground() const { return m_themeForeground; }
     QString themeAccent() const { return m_themeAccent; }
