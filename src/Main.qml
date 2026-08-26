@@ -509,6 +509,10 @@ ApplicationWindow {
                 return !pinchActive;
             }
 
+            function pinchShouldRecaptureAnchor(zoomedThisGesture) {
+                return !zoomedThisGesture;
+            }
+
             WheelHandler {
                 // Wayland compositors route every pointer's scroll through
                 // one seat device that Qt classifies as a touchpad, so the
@@ -565,8 +569,12 @@ ApplicationWindow {
                 onScaleChanged: {
                     if (!active)
                         return;
-                    if (Math.abs(activeScale - 1) >= 0.02)
+                    if (Math.abs(activeScale - 1) >= 0.02) {
+                        if (editorFlick.pinchShouldRecaptureAnchor(zoomedThisGesture))
+                            editorFlick.captureZoomAnchorAt(centroid.position.x,
+                                                            centroid.position.y);
                         zoomedThisGesture = true;
+                    }
                     var before = win.zoomFactor;
                     backend.zoomToPercent(Math.round(startPercent * activeScale));
                     if (win.zoomFactor === before)
@@ -586,6 +594,9 @@ ApplicationWindow {
                         return;
                     editorFlick.contentX = editorFlick.clampContentX(
                         editorFlick.contentX - deltaX);
+                    if (editorFlick.pinchShouldRecaptureAnchor(zoomedThisGesture))
+                        editorFlick.captureZoomAnchorAt(centroid.position.x,
+                                                        centroid.position.y);
                 }
             }
 

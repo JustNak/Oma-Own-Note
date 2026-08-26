@@ -500,6 +500,16 @@ private slots:
                                           Q_RETURN_ARG(QVariant, allowed),
                                           Q_ARG(QVariant, false)));
         QCOMPARE(allowed.toBool(), true);
+
+        QVERIFY(QMetaObject::invokeMethod(flick, "pinchShouldRecaptureAnchor",
+                                          Q_RETURN_ARG(QVariant, allowed),
+                                          Q_ARG(QVariant, false)));
+        QCOMPARE(allowed.toBool(), true);
+
+        QVERIFY(QMetaObject::invokeMethod(flick, "pinchShouldRecaptureAnchor",
+                                          Q_RETURN_ARG(QVariant, allowed),
+                                          Q_ARG(QVariant, true)));
+        QCOMPARE(allowed.toBool(), false);
     }
 
     void remembersLastSaveDirectory() {
