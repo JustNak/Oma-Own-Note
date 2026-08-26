@@ -4,6 +4,7 @@
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQuickStyle>
+#include <QQuickWindow>
 
 #include "backend.h"
 #include "markdownhighlighter.h"
@@ -239,6 +240,61 @@ private slots:
         backend.setTextScale(9.0 / 12.0);
         QCOMPARE(window->property("editorFontPixelSize").toInt(), 15);
         QCOMPARE(editor->property("font").value<QFont>().pixelSize(), 15);
+    }
+
+    void canvasZoomDoesNotChangeEditorPixelSize() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QObject *canvas = window->findChild<QObject *>(QStringLiteral("editorCanvas"));
+        QVERIFY(editor);
+        QVERIFY(canvas);
+        QCOMPARE(editor->property("font").value<QFont>().pixelSize(), 20);
+        QCOMPARE(canvas->property("scale").toReal(), 1.0);
+
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
+        QVERIFY(quickWindow);
+        QTest::keyClick(quickWindow, Qt::Key_Equal, Qt::ControlModifier);
+        QTRY_COMPARE(backend.zoomFactor(), 1.1);
+        QCOMPARE(editor->property("font").value<QFont>().pixelSize(), 20);
+        QCOMPARE(canvas->property("scale").toReal(), 1.1);
+
+        QTest::keyClick(quickWindow, Qt::Key_Minus, Qt::ControlModifier);
+        QTRY_COMPARE(backend.zoomFactor(), 1.0);
+        QCOMPARE(canvas->property("scale").toReal(), 1.0);
+
+        QTest::keyClick(quickWindow, Qt::Key_Equal, Qt::ControlModifier);
+        QTRY_COMPARE(backend.zoomFactor(), 1.1);
+        QTest::keyClick(quickWindow, Qt::Key_0, Qt::ControlModifier);
+        QTRY_COMPARE(backend.zoomFactor(), 1.0);
+        QCOMPARE(canvas->property("scale").toReal(), 1.0);
+
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "zoomIn"));
+        QCOMPARE(backend.zoomFactor(), 1.1);
+        QCOMPARE(editor->property("font").value<QFont>().pixelSize(), 20);
+        QCOMPARE(canvas->property("scale").toReal(), 1.1);
+
+        backend.setTextScale(16.0 / 12.0);
+        QCOMPARE(window->property("editorFontPixelSize").toInt(), 27);
+        QCOMPARE(editor->property("font").value<QFont>().pixelSize(), 27);
+        QCOMPARE(canvas->property("scale").toReal(), 1.1);
+
+        QObject *wordCount = window->findChild<QObject *>(QStringLiteral("wordCountLabel"));
+        QVERIFY(wordCount);
+        QCOMPARE(wordCount->property("font").value<QFont>().pixelSize(),
+                 qRound(11 * 16.0 / 12.0));
+
+        backend.resetZoom();
+        QCOMPARE(backend.zoomFactor(), 1.0);
     }
 
     void remembersLastSaveDirectory() {

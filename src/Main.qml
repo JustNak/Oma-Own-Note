@@ -25,6 +25,7 @@ ApplicationWindow {
     // `omarchy display text size` drives) anchored so its 12px default leaves
     // the app at the sizes it was designed around.
     readonly property real textScale: backend.textScale
+    readonly property real zoomFactor: backend.zoomFactor
     readonly property int editorFontPixelSize: scaledSize(20)
     readonly property int editorWidth: Math.min(
         Math.round(writerFontMetrics.averageCharacterWidth * 65),
@@ -89,6 +90,24 @@ ApplicationWindow {
         win.visibility = win.visibility === Window.FullScreen
             ? Window.Windowed
             : Window.FullScreen;
+    }
+
+    function zoomIn() {
+        editorFlick.captureZoomAnchor();
+        backend.zoomIn();
+        editorFlick.restoreZoomAnchor();
+    }
+
+    function zoomOut() {
+        editorFlick.captureZoomAnchor();
+        backend.zoomOut();
+        editorFlick.restoreZoomAnchor();
+    }
+
+    function resetZoom() {
+        editorFlick.captureZoomAnchor();
+        backend.resetZoom();
+        editorFlick.restoreZoomAnchor();
     }
 
     function updateSearch() {
@@ -231,6 +250,24 @@ ApplicationWindow {
     }
 
     Shortcut {
+        sequences: ["Ctrl+=", "Ctrl++"]
+        context: Qt.ApplicationShortcut
+        onActivated: win.zoomIn()
+    }
+
+    Shortcut {
+        sequences: ["Ctrl+-", "Ctrl+_"]
+        context: Qt.ApplicationShortcut
+        onActivated: win.zoomOut()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+0"
+        context: Qt.ApplicationShortcut
+        onActivated: win.resetZoom()
+    }
+
+    Shortcut {
         sequence: "Ctrl+G"
         context: Qt.ApplicationShortcut
         enabled: win.searchOpen
@@ -331,7 +368,7 @@ ApplicationWindow {
         standardButtons: Dialog.Close
         anchors.centerIn: parent
         contentItem: Label {
-            text: "Ctrl+S  Save\nCtrl+Shift+S  Save As\nCtrl+O  Open\nCtrl+N  New Window\nCtrl+F  Find\nCtrl+H  Find and Replace\nCtrl+B  Bold\nCtrl+I  Italic\nCtrl+K  Link\nCtrl+P  Print\nF11 / Super+F  Fullscreen\nCtrl+?  Shortcuts"
+            text: "Ctrl+S  Save\nCtrl+Shift+S  Save As\nCtrl+O  Open\nCtrl+N  New Window\nCtrl+F  Find\nCtrl+H  Find and Replace\nCtrl+B  Bold\nCtrl+I  Italic\nCtrl+K  Link\nCtrl+P  Print\nCtrl+= / Ctrl++  Zoom In\nCtrl+-  Zoom Out\nCtrl+0  Reset Zoom\nF11 / Super+F  Fullscreen\nCtrl+?  Shortcuts"
             lineHeight: 1.5
         }
     }
@@ -345,9 +382,15 @@ ApplicationWindow {
             anchors.leftMargin: 24
             anchors.rightMargin: 24
             clip: true
-            contentWidth: width
-            contentHeight: Math.max(height, editor.y + editor.implicitHeight + 220)
+            contentWidth: Math.max(width, canvas.x + canvas.width * canvas.scale)
+            contentHeight: Math.max(height, canvas.y + canvas.height * canvas.scale + 220)
             boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.horizontal: ScrollBar {
+                policy: ScrollBar.AsNeeded
+                active: hovered || pressed || wheelScroll.running || scrollLinger.running
+                rightPadding: win.scaledSize(32)
+                rightInset: win.scaledSize(32)
+            }
             ScrollBar.vertical: ScrollBar {
                 policy: ScrollBar.AsNeeded
                 // Wheel scrolling moves contentY directly rather than
@@ -464,10 +507,16 @@ ApplicationWindow {
                 acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                 onWheel: function(wheel) {
                     scrollLinger.restart();
-                    if (wheel.pixelDelta.y !== 0)
-                        editorFlick.scrollTo(editorFlick.clampContentY(editorFlick.contentY - wheel.pixelDelta.y));
-                    else
+                    if (wheel.pixelDelta.x !== 0 || wheel.pixelDelta.y !== 0) {
+                        if (wheel.pixelDelta.y !== 0)
+                            editorFlick.scrollTo(editorFlick.clampContentY(
+                                editorFlick.contentY - wheel.pixelDelta.y));
+                        if (wheel.pixelDelta.x !== 0)
+                            editorFlick.contentX = editorFlick.clampContentX(
+                                editorFlick.contentX - wheel.pixelDelta.x);
+                    } else {
                         editorFlick.scrollByWheel(wheel);
+                    }
                     wheel.accepted = true;
                 }
             }
@@ -503,6 +552,42 @@ ApplicationWindow {
                 return Math.max(0, Math.min(Math.max(0, contentHeight - height), y));
             }
 
+            function clampContentX(x) {
+                return Math.max(0, Math.min(Math.max(0, contentWidth - width), x));
+            }
+
+            function toContentX(documentX) {
+                return canvas.x + documentX * win.zoomFactor;
+            }
+
+            function toContentY(documentY) {
+                return canvas.y + documentY * win.zoomFactor;
+            }
+
+            property bool zoomAnchorCaptured: false
+            property real zoomAnchorDocX: 0
+            property real zoomAnchorDocY: 0
+            property real zoomAnchorViewX: 0
+            property real zoomAnchorViewY: 0
+
+            function captureZoomAnchor() {
+                if (zoomAnchorCaptured)
+                    return;
+                zoomAnchorDocX = editor.cursorRectangle.x;
+                zoomAnchorDocY = editor.cursorRectangle.y;
+                zoomAnchorViewX = toContentX(zoomAnchorDocX) - contentX;
+                zoomAnchorViewY = toContentY(zoomAnchorDocY) - contentY;
+                zoomAnchorCaptured = true;
+            }
+
+            function restoreZoomAnchor() {
+                if (!zoomAnchorCaptured)
+                    return;
+                contentX = clampContentX(toContentX(zoomAnchorDocX) - zoomAnchorViewX);
+                scrollTo(clampContentY(toContentY(zoomAnchorDocY) - zoomAnchorViewY));
+                zoomAnchorCaptured = false;
+            }
+
             // Whole device pixels keep natively hinted glyphs from
             // re-rasterizing mid-animation, which reads as shimmer.
             function snapToPixel(y) {
@@ -518,24 +603,49 @@ ApplicationWindow {
             // Keep the editing caret within the viewport so writing past the
             // bottom edge scrolls the page along with the text.
             function ensureCursorVisible() {
-                var margin = win.editorFontPixelSize * 2;
-                var cursorTop = editor.y + editor.cursorRectangle.y;
-                var cursorBottom = cursorTop + editor.cursorRectangle.height;
+                var margin = win.editorFontPixelSize * 2 * win.zoomFactor;
+                var cursorTop = toContentY(editor.cursorRectangle.y);
+                var cursorBottom = toContentY(editor.cursorRectangle.y
+                                              + editor.cursorRectangle.height);
                 var maxContentY = Math.max(0, contentHeight - height);
 
                 if (cursorBottom + margin > contentY + height)
                     scrollTo(Math.min(maxContentY, cursorBottom + margin - height));
                 else if (cursorTop - margin < contentY)
                     scrollTo(Math.max(0, cursorTop - margin));
+
+                var cursorLeft = toContentX(editor.cursorRectangle.x);
+                var cursorRight = toContentX(editor.cursorRectangle.x
+                                             + editor.cursorRectangle.width);
+                if (cursorRight + margin > contentX + width)
+                    contentX = clampContentX(cursorRight + margin - width);
+                else if (cursorLeft - margin < contentX)
+                    contentX = clampContentX(cursorLeft - margin);
             }
+
+            Item {
+                id: canvas
+                objectName: "editorCanvas"
+                width: editor.width
+                height: Math.max(
+                    (editorFlick.height - y - 96) / Math.max(scale, 0.01),
+                    editor.implicitHeight + 20)
+                scale: win.zoomFactor
+                transformOrigin: Item.TopLeft
+                x: {
+                    var visualW = width * scale
+                    return visualW < editorFlick.width
+                        ? Math.round((editorFlick.width - visualW) / 2)
+                        : 0
+                }
+                y: Math.max(42, Math.round(win.height * 0.05))
 
             TextEdit {
                 id: editor
                 objectName: "sourceEditor"
-                x: Math.round((editorFlick.width - width) / 2)
-                y: Math.max(42, Math.round(win.height * 0.05))
+                x: 0
                 width: win.editorWidth
-                height: Math.max(editorFlick.height - y - 96, implicitHeight + 20)
+                height: parent.height
                 text: ""
                 textFormat: TextEdit.PlainText
                 wrapMode: TextEdit.Wrap
@@ -553,9 +663,13 @@ ApplicationWindow {
                 // rasterizes glyphs at fractional ones (and goes stale when
                 // the compositor delivers the fractional scale after the
                 // first frame). Fall back to Qt's scalable renderer there.
-                renderType: Screen.devicePixelRatio % 1 === 0 ? TextEdit.NativeRendering : TextEdit.QtRendering
+                // Hinted bitmaps stretch under Item.scale, so any canvas zoom
+                // uses QtRendering even at integer DPR.
+                renderType: (Screen.devicePixelRatio % 1 === 0 && win.zoomFactor === 1)
+                            ? TextEdit.NativeRendering
+                            : TextEdit.QtRendering
                 cursorDelegate: Rectangle {
-                    width: 1
+                    width: 1 / Math.max(canvas.scale, 0.01)
                     color: win.strongTextColor
                 }
                 onCursorRectangleChanged: editorFlick.ensureCursorVisible()
@@ -707,8 +821,9 @@ ApplicationWindow {
                 }
 
                 function movePage(direction, extendSelection) {
-                    var pageStep = Math.max(win.editorFontPixelSize,
-                                            editorFlick.height - win.editorFontPixelSize * 2);
+                    var pageStep = Math.max(
+                        win.editorFontPixelSize,
+                        editorFlick.height / win.zoomFactor - win.editorFontPixelSize * 2);
                     var rect = cursorRectangle;
                     var targetY = rect.y + rect.height / 2 + direction * pageStep;
                     var target = positionAt(rect.x, Math.max(0, targetY));
@@ -794,6 +909,7 @@ ApplicationWindow {
                     forceActiveFocus();
                 }
             }
+            }
         }
 
         Row {
@@ -835,6 +951,7 @@ ApplicationWindow {
         }
 
         Label {
+            objectName: "wordCountLabel"
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             anchors.rightMargin: 12
