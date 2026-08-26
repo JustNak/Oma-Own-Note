@@ -110,6 +110,12 @@ ApplicationWindow {
         editorFlick.restoreZoomAnchor();
     }
 
+    function zoomToPercent(percent) {
+        editorFlick.captureZoomAnchor();
+        backend.zoomToPercent(percent);
+        editorFlick.restoreZoomAnchor();
+    }
+
     function updateSearch() {
         var matches = [];
         var query = searchField.text;
@@ -368,7 +374,7 @@ ApplicationWindow {
         standardButtons: Dialog.Close
         anchors.centerIn: parent
         contentItem: Label {
-            text: "Ctrl+S  Save\nCtrl+Shift+S  Save As\nCtrl+O  Open\nCtrl+N  New Window\nCtrl+F  Find\nCtrl+H  Find and Replace\nCtrl+B  Bold\nCtrl+I  Italic\nCtrl+K  Link\nCtrl+P  Print\nCtrl+= / Ctrl++  Zoom In\nCtrl+-  Zoom Out\nCtrl+0  Reset Zoom\nF11 / Super+F  Fullscreen\nCtrl+?  Shortcuts"
+            text: "Ctrl+S  Save\nCtrl+Shift+S  Save As\nCtrl+O  Open\nCtrl+N  New Window\nCtrl+F  Find\nCtrl+H  Find and Replace\nCtrl+B  Bold\nCtrl+I  Italic\nCtrl+K  Link\nCtrl+P  Print\nCtrl+= / Ctrl++  Zoom In\nCtrl+-  Zoom Out\nCtrl+0  Reset Zoom\nPinch  Zoom canvas\nTwo-finger sideways  Scroll horizontally\nF11 / Super+F  Fullscreen\nCtrl+?  Shortcuts"
             lineHeight: 1.5
         }
     }
@@ -511,9 +517,52 @@ ApplicationWindow {
                             editorFlick.contentX = editorFlick.clampContentX(
                                 editorFlick.contentX - wheel.pixelDelta.x);
                     } else {
-                        editorFlick.scrollByWheel(wheel);
+                        if (wheel.angleDelta.x !== 0)
+                            editorFlick.contentX = editorFlick.clampContentX(
+                                editorFlick.contentX - (wheel.angleDelta.x / 120) * editorFlick.wheelStep);
+                        if (wheel.angleDelta.y !== 0)
+                            editorFlick.scrollByWheel(wheel);
                     }
                     wheel.accepted = true;
+                }
+            }
+
+            PinchHandler {
+                // Otherwise PinchHandler scales the Flickable and fights canvas.scale: win.zoomFactor.
+                target: null
+                rotationAxis.enabled: false
+                acceptedDevices: PointerDevice.TouchPad | PointerDevice.TouchScreen
+                property int startPercent: 100
+                property point lastTranslation: Qt.point(0, 0)
+
+                onActiveChanged: {
+                    if (active) {
+                        startPercent = Math.round(win.zoomFactor * 100);
+                        lastTranslation = Qt.point(0, 0);
+                        editorFlick.captureZoomAnchorAt(centroid.position.x, centroid.position.y);
+                    } else {
+                        editorFlick.restoreZoomAnchor();
+                    }
+                }
+
+                onScaleChanged: {
+                    if (!active)
+                        return;
+                    editorFlick.zoomAnchorViewX = centroid.position.x;
+                    editorFlick.zoomAnchorViewY = centroid.position.y;
+                    editorFlick.zoomAnchorCaptured = true;
+                    win.zoomToPercent(Math.round(startPercent * activeScale));
+                }
+
+                onTranslationChanged: {
+                    if (!active)
+                        return;
+                    var deltaX = activeTranslation.x - lastTranslation.x;
+                    lastTranslation = activeTranslation;
+                    if (Math.abs(activeScale - 1) < 0.02) {
+                        editorFlick.contentX = editorFlick.clampContentX(
+                            editorFlick.contentX - deltaX);
+                    }
                 }
             }
 
@@ -573,6 +622,14 @@ ApplicationWindow {
                 zoomAnchorDocY = editor.cursorRectangle.y;
                 zoomAnchorViewX = toContentX(zoomAnchorDocX) - contentX;
                 zoomAnchorViewY = toContentY(zoomAnchorDocY) - contentY;
+                zoomAnchorCaptured = true;
+            }
+
+            function captureZoomAnchorAt(viewX, viewY) {
+                zoomAnchorDocX = (contentX + viewX - canvas.x) / win.zoomFactor;
+                zoomAnchorDocY = (contentY + viewY - canvas.y) / win.zoomFactor;
+                zoomAnchorViewX = viewX;
+                zoomAnchorViewY = viewY;
                 zoomAnchorCaptured = true;
             }
 

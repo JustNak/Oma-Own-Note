@@ -403,6 +403,60 @@ private slots:
         backend.resetZoom();
     }
 
+    void pinchZoomGoesThroughViewZoom() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QObject *canvas = window->findChild<QObject *>(QStringLiteral("editorCanvas"));
+        QObject *zoomLabel = window->findChild<QObject *>(QStringLiteral("zoomPercentLabel"));
+        QVERIFY(editor);
+        QVERIFY(canvas);
+        QVERIFY(zoomLabel);
+
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "zoomToPercent",
+                                          Q_ARG(QVariant, 150)));
+        QCOMPARE(backend.zoomFactor(), 1.5);
+        QCOMPARE(canvas->property("scale").toReal(), 1.5);
+        QCOMPARE(editor->property("font").value<QFont>().pixelSize(), 20);
+        QCOMPARE(zoomLabel->property("visible").toBool(), true);
+        QCOMPARE(zoomLabel->property("text").toString(), QStringLiteral("150%"));
+
+        backend.resetZoom();
+        QCOMPARE(backend.zoomFactor(), 1.0);
+    }
+
+    void zoomedCanvasCanScrollHorizontally() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *flick = window->findChild<QObject *>(QStringLiteral("editorFlick"));
+        QVERIFY(flick);
+
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "zoomToPercent",
+                                          Q_ARG(QVariant, 300)));
+        QVERIFY(flick->property("contentWidth").toReal()
+                > flick->property("width").toReal());
+
+        backend.resetZoom();
+    }
+
     void remembersLastSaveDirectory() {
         QTemporaryDir saveDirectory;
         QVERIFY(saveDirectory.isValid());
