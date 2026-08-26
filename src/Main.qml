@@ -382,9 +382,10 @@ ApplicationWindow {
             anchors.fill: parent
             anchors.leftMargin: 24
             anchors.rightMargin: 24
+            anchors.bottomMargin: win.scaledSize(32)
             clip: true
             contentWidth: Math.max(width, canvas.x + canvas.width * canvas.scale)
-            contentHeight: Math.max(height, canvas.y + canvas.height * canvas.scale + 220)
+            contentHeight: Math.max(height, canvas.y + (editor.implicitHeight + 20) * canvas.scale + 220)
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.horizontal: ScrollBar {
                 policy: ScrollBar.AsNeeded
@@ -398,12 +399,6 @@ ApplicationWindow {
                 // flicking the Flickable, so the bar has to be told about
                 // that activity; linger briefly after the last event.
                 active: hovered || pressed || wheelScroll.running || scrollLinger.running
-                // Stop above the footer strip so the bar doesn't overlap
-                // the word count in the bottom-right corner. Padding and
-                // inset, not anchors: the attached-ScrollBar layout overrides
-                // anchors. Padding stops the thumb, the inset the track.
-                bottomPadding: win.scaledSize(32)
-                bottomInset: win.scaledSize(32)
             }
 
             Timer {
@@ -633,12 +628,8 @@ ApplicationWindow {
                     editor.implicitHeight + 20)
                 scale: win.zoomFactor
                 transformOrigin: Item.TopLeft
-                x: {
-                    var visualW = width * scale
-                    return visualW < editorFlick.width
-                        ? Math.round((editorFlick.width - visualW) / 2)
-                        : 0
-                }
+                clip: false
+                x: Math.round((editorFlick.width - editor.width) / 2)
                 y: Math.max(42, Math.round(win.height * 0.05))
 
             TextEdit {
@@ -650,6 +641,7 @@ ApplicationWindow {
                 text: ""
                 textFormat: TextEdit.PlainText
                 wrapMode: TextEdit.Wrap
+                clip: false
                 selectByMouse: true
                 persistentSelection: true
                 activeFocusOnPress: true
@@ -951,17 +943,31 @@ ApplicationWindow {
             }
         }
 
-        Label {
-            objectName: "wordCountLabel"
+        Row {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             anchors.rightMargin: 12
             anchors.bottomMargin: 10
-            text: backend.wordCount + (backend.wordCount === 1 ? " Word" : " Words")
-            color: win.mutedColor
-            opacity: 0.75
-            font.family: "iA Writer Mono S"
-            font.pixelSize: win.scaledSize(11)
+            spacing: 12
+
+            Label {
+                objectName: "zoomPercentLabel"
+                visible: Math.round(win.zoomFactor * 100) !== 100
+                text: Math.round(win.zoomFactor * 100) + "%"
+                color: win.mutedColor
+                opacity: 0.75
+                font.family: "iA Writer Mono S"
+                font.pixelSize: win.scaledSize(11)
+            }
+
+            Label {
+                objectName: "wordCountLabel"
+                text: backend.wordCount + (backend.wordCount === 1 ? " Word" : " Words")
+                color: win.mutedColor
+                opacity: 0.75
+                font.family: "iA Writer Mono S"
+                font.pixelSize: win.scaledSize(11)
+            }
         }
 
 
