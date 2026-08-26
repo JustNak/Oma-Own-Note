@@ -720,14 +720,16 @@ ApplicationWindow {
                 scale: win.zoomFactor
                 transformOrigin: Item.TopLeft
                 clip: false
-                x: Math.round((editorFlick.width - editor.width) / 2)
+                x: Math.round((editorFlick.width - win.editorWidth) / 2)
                 y: Math.max(42, Math.round(win.height * 0.05))
 
             TextEdit {
                 id: editor
                 objectName: "sourceEditor"
                 x: 0
-                width: win.editorWidth
+                // Inverse of canvas.scale so wrap still fills the 65-character
+                // column after zoom.
+                width: Math.round(win.editorWidth / Math.max(win.zoomFactor, 0.01))
                 height: parent.height
                 text: ""
                 textFormat: TextEdit.PlainText

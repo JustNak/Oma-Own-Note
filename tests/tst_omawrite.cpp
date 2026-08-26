@@ -353,6 +353,62 @@ private slots:
         backend.resetZoom();
     }
 
+    void canvasZoomKeepsVisualColumn() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QObject *canvas = window->findChild<QObject *>(QStringLiteral("editorCanvas"));
+        QObject *flick = window->findChild<QObject *>(QStringLiteral("editorFlick"));
+        QVERIFY(editor);
+        QVERIFY(canvas);
+        QVERIFY(flick);
+
+        const qreal columnWidth = editor->property("width").toReal();
+        const qreal originX = canvas->property("x").toReal();
+        QVERIFY(columnWidth > 0);
+        QVERIFY(originX > 0);
+
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "zoomToPercent",
+                                          Q_ARG(QVariant, 70)));
+        QCOMPARE(backend.zoomFactor(), 0.7);
+        QCOMPARE(canvas->property("x").toReal(), originX);
+        QCOMPARE(editor->property("font").value<QFont>().pixelSize(), 20);
+        QVERIFY(editor->property("width").toReal() > columnWidth);
+        const qreal visualAt70 = canvas->property("width").toReal()
+            * canvas->property("scale").toReal();
+        QVERIFY2(qAbs(visualAt70 - columnWidth) < 2.0,
+                 qPrintable(QStringLiteral("70% visual %1 vs column %2")
+                            .arg(visualAt70)
+                            .arg(columnWidth)));
+
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "zoomToPercent",
+                                          Q_ARG(QVariant, 300)));
+        QCOMPARE(backend.zoomFactor(), 3.0);
+        QCOMPARE(canvas->property("x").toReal(), originX);
+        QCOMPARE(editor->property("font").value<QFont>().pixelSize(), 20);
+        QVERIFY(editor->property("width").toReal() < columnWidth);
+        const qreal visualAt300 = canvas->property("width").toReal()
+            * canvas->property("scale").toReal();
+        QVERIFY2(qAbs(visualAt300 - columnWidth) < 2.0,
+                 qPrintable(QStringLiteral("300% visual %1 vs column %2")
+                            .arg(visualAt300)
+                            .arg(columnWidth)));
+        QVERIFY(flick->property("contentWidth").toReal()
+                <= flick->property("width").toReal() + 1);
+
+        backend.resetZoom();
+        QCOMPARE(editor->property("width").toReal(), columnWidth);
+    }
+
     void shortDocumentDoesNotPhantomScroll() {
         const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
         QVERIFY(!mainQmlPath.isEmpty());
@@ -432,29 +488,6 @@ private slots:
 
         backend.resetZoom();
         QCOMPARE(backend.zoomFactor(), 1.0);
-    }
-
-    void zoomedCanvasCanScrollHorizontally() {
-        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
-        QVERIFY(!mainQmlPath.isEmpty());
-
-        Backend backend;
-        QQmlEngine engine;
-        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
-        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
-        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
-        QScopedPointer<QObject> window(component.create());
-        QVERIFY2(window, qPrintable(component.errorString()));
-
-        QObject *flick = window->findChild<QObject *>(QStringLiteral("editorFlick"));
-        QVERIFY(flick);
-
-        QVERIFY(QMetaObject::invokeMethod(window.data(), "zoomToPercent",
-                                          Q_ARG(QVariant, 300)));
-        QVERIFY(flick->property("contentWidth").toReal()
-                > flick->property("width").toReal());
-
-        backend.resetZoom();
     }
 
     void pinchZoomDoesNotPanOnceItHasZoomed() {

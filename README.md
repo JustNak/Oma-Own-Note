@@ -26,7 +26,7 @@ Install via the Omarchy Package Repository via the `omawrite` package. It's inst
 - `Ctrl+=` and `Ctrl++` zoom the writing canvas in.
 - `Ctrl+-` and `Ctrl+_` zoom the writing canvas out.
 - `Ctrl+0` resets canvas zoom to 100%.
-- Pinch in or out zooms the writing canvas. Two-finger sideways motion scrolls horizontally when the canvas is wider than the view.
+- Pinch in or out zooms the writing canvas. Wrap stays in the 65-character column. Two-finger sideways motion scrolls horizontally when the canvas is wider than the view.
 
 Unsaved drafts are recovered after an abnormal exit. Omawrite also watches open files
 and warns before an external change can replace local work.
