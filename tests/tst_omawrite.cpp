@@ -205,6 +205,16 @@ private slots:
         QCOMPARE(ViewZoom{}.percent(), 100);
     }
 
+    void zoomPersistsAcrossBackendInstances() {
+        Backend first;
+        first.zoomIn();
+        QCOMPARE(first.zoomFactor(), 1.1);
+        Backend second;
+        QCOMPARE(second.zoomFactor(), 1.1);
+        second.resetZoom();
+        QCOMPARE(second.zoomFactor(), 1.0);
+    }
+
     void scalesTextWithDesktopTextSize() {
         const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
         QVERIFY(!mainQmlPath.isEmpty());
