@@ -534,11 +534,13 @@ ApplicationWindow {
                 acceptedDevices: PointerDevice.TouchPad | PointerDevice.TouchScreen
                 property int startPercent: 100
                 property point lastTranslation: Qt.point(0, 0)
+                property real lastActiveScale: 1
 
                 onActiveChanged: {
                     if (active) {
                         startPercent = Math.round(win.zoomFactor * 100);
                         lastTranslation = Qt.point(0, 0);
+                        lastActiveScale = 1;
                         editorFlick.captureZoomAnchorAt(centroid.position.x, centroid.position.y);
                     } else {
                         editorFlick.restoreZoomAnchor();
@@ -559,10 +561,11 @@ ApplicationWindow {
                         return;
                     var deltaX = activeTranslation.x - lastTranslation.x;
                     lastTranslation = activeTranslation;
-                    if (Math.abs(activeScale - 1) < 0.02) {
+                    var scaleHeld = Math.abs(activeScale - lastActiveScale) < 0.001;
+                    lastActiveScale = activeScale;
+                    if (scaleHeld)
                         editorFlick.contentX = editorFlick.clampContentX(
                             editorFlick.contentX - deltaX);
-                    }
                 }
             }
 
