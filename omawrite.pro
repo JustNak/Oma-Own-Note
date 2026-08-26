@@ -7,7 +7,8 @@ TEMPLATE = app
 HEADERS += \
     src/backend.h \
     src/markdownhighlighter.h \
-    src/systemtheme.h
+    src/systemtheme.h \
+    src/viewzoom.h
 
 SOURCES += \
     src/main.cpp \

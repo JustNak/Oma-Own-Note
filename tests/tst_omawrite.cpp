@@ -7,6 +7,7 @@
 
 #include "backend.h"
 #include "markdownhighlighter.h"
+#include "viewzoom.h"
 
 class OmawriteTest : public QObject {
     Q_OBJECT
@@ -190,6 +191,18 @@ private slots:
         QSignalSpy openDialogSpy(&backend, &Backend::openDialogRequested);
         QVERIFY(QMetaObject::invokeMethod(openButton, "clicked"));
         QCOMPARE(openDialogSpy.count(), 1);
+    }
+
+    void zoomSnapsAndClamps() {
+        QCOMPARE(ViewZoom::fromPercent(100).factor(), 1.0);
+        QCOMPARE(ViewZoom::fromPercent(137).percent(), 140);
+        QCOMPARE(ViewZoom::fromPercent(0).percent(), 50);
+        QCOMPARE(ViewZoom::fromPercent(900).percent(), 300);
+        QCOMPARE(ViewZoom::fromPercent(100).stepped(1).percent(), 110);
+        QCOMPARE(ViewZoom::fromPercent(300).stepped(1).percent(), 300);
+        QCOMPARE(ViewZoom::fromPercent(50).stepped(-1).percent(), 50);
+        QCOMPARE(ViewZoom::fromPercent(150).stepped(-20).percent(), 50);
+        QCOMPARE(ViewZoom{}.percent(), 100);
     }
 
     void scalesTextWithDesktopTextSize() {
