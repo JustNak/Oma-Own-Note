@@ -378,6 +378,7 @@ ApplicationWindow {
 
         Flickable {
             id: editorFlick
+            objectName: "editorFlick"
             anchors.fill: parent
             anchors.leftMargin: 24
             anchors.rightMargin: 24

@@ -297,6 +297,93 @@ private slots:
         QCOMPARE(backend.zoomFactor(), 1.0);
     }
 
+    void canvasZoomKeepsColumnOrigin() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *canvas = window->findChild<QObject *>(QStringLiteral("editorCanvas"));
+        QObject *flick = window->findChild<QObject *>(QStringLiteral("editorFlick"));
+        QVERIFY(canvas);
+        QVERIFY(flick);
+
+        const qreal originX = canvas->property("x").toReal();
+        QVERIFY(originX > 0);
+
+        for (int i = 0; i < 5; ++i)
+            backend.zoomOut();
+        QCOMPARE(backend.zoomFactor(), 0.5);
+        QCOMPARE(canvas->property("x").toReal(), originX);
+
+        backend.resetZoom();
+        for (int i = 0; i < 20; ++i)
+            backend.zoomIn();
+        QCOMPARE(backend.zoomFactor(), 3.0);
+        QCOMPARE(canvas->property("x").toReal(), originX);
+        const qreal visualRight = originX
+            + canvas->property("width").toReal() * canvas->property("scale").toReal();
+        QVERIFY(flick->property("contentWidth").toReal() >= visualRight);
+
+        backend.resetZoom();
+    }
+
+    void shortDocumentDoesNotPhantomScroll() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *flick = window->findChild<QObject *>(QStringLiteral("editorFlick"));
+        QVERIFY(flick);
+        QVERIFY(flick->property("contentHeight").toReal()
+                <= flick->property("height").toReal() + 1);
+
+        backend.resetZoom();
+    }
+
+    void zoomPercentLabelTracksCanvasZoom() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *zoomLabel = window->findChild<QObject *>(QStringLiteral("zoomPercentLabel"));
+        QVERIFY(zoomLabel);
+        QCOMPARE(zoomLabel->property("visible").toBool(), false);
+
+        backend.zoomIn();
+        QCOMPARE(zoomLabel->property("visible").toBool(), true);
+        QCOMPARE(zoomLabel->property("text").toString(), QStringLiteral("110%"));
+
+        backend.resetZoom();
+        QCOMPARE(zoomLabel->property("visible").toBool(), false);
+
+        backend.zoomOut();
+        QCOMPARE(zoomLabel->property("visible").toBool(), true);
+        QCOMPARE(zoomLabel->property("text").toString(), QStringLiteral("90%"));
+
+        backend.resetZoom();
+    }
+
     void remembersLastSaveDirectory() {
         QTemporaryDir saveDirectory;
         QVERIFY(saveDirectory.isValid());
