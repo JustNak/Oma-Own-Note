@@ -499,6 +499,16 @@ ApplicationWindow {
                 }
             }
 
+            function pinchAllowsPan(activeScale, zoomedThisGesture) {
+                if (zoomedThisGesture)
+                    return false;
+                return Math.abs(activeScale - 1) < 0.02;
+            }
+
+            function pinchAllowsWheel(pinchActive) {
+                return !pinchActive;
+            }
+
             WheelHandler {
                 // Wayland compositors route every pointer's scroll through
                 // one seat device that Qt classifies as a touchpad, so the
@@ -508,6 +518,10 @@ ApplicationWindow {
                 // finger scrolling carries pixel-precise pixelDelta.
                 acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                 onWheel: function(wheel) {
+                    if (!editorFlick.pinchAllowsWheel(pinchZoom.active)) {
+                        wheel.accepted = true;
+                        return;
+                    }
                     scrollLinger.restart();
                     if (wheel.pixelDelta.x !== 0 || wheel.pixelDelta.y !== 0) {
                         if (wheel.pixelDelta.y !== 0)
@@ -528,19 +542,20 @@ ApplicationWindow {
             }
 
             PinchHandler {
+                id: pinchZoom
                 // Otherwise PinchHandler scales the Flickable and fights canvas.scale: win.zoomFactor.
                 target: null
                 rotationAxis.enabled: false
                 acceptedDevices: PointerDevice.TouchPad | PointerDevice.TouchScreen
                 property int startPercent: 100
                 property point lastTranslation: Qt.point(0, 0)
-                property real lastActiveScale: 1
+                property bool zoomedThisGesture: false
 
                 onActiveChanged: {
                     if (active) {
                         startPercent = Math.round(win.zoomFactor * 100);
                         lastTranslation = Qt.point(0, 0);
-                        lastActiveScale = 1;
+                        zoomedThisGesture = false;
                         editorFlick.captureZoomAnchorAt(centroid.position.x, centroid.position.y);
                     } else {
                         editorFlick.restoreZoomAnchor();
@@ -550,10 +565,16 @@ ApplicationWindow {
                 onScaleChanged: {
                     if (!active)
                         return;
+                    if (Math.abs(activeScale - 1) >= 0.02)
+                        zoomedThisGesture = true;
+                    var before = win.zoomFactor;
+                    backend.zoomToPercent(Math.round(startPercent * activeScale));
+                    if (win.zoomFactor === before)
+                        return;
                     editorFlick.zoomAnchorViewX = centroid.position.x;
                     editorFlick.zoomAnchorViewY = centroid.position.y;
                     editorFlick.zoomAnchorCaptured = true;
-                    win.zoomToPercent(Math.round(startPercent * activeScale));
+                    editorFlick.restoreZoomAnchor();
                 }
 
                 onTranslationChanged: {
@@ -561,11 +582,10 @@ ApplicationWindow {
                         return;
                     var deltaX = activeTranslation.x - lastTranslation.x;
                     lastTranslation = activeTranslation;
-                    var scaleHeld = Math.abs(activeScale - lastActiveScale) < 0.001;
-                    lastActiveScale = activeScale;
-                    if (scaleHeld)
-                        editorFlick.contentX = editorFlick.clampContentX(
-                            editorFlick.contentX - deltaX);
+                    if (!editorFlick.pinchAllowsPan(activeScale, zoomedThisGesture))
+                        return;
+                    editorFlick.contentX = editorFlick.clampContentX(
+                        editorFlick.contentX - deltaX);
                 }
             }
 

@@ -457,6 +457,51 @@ private slots:
         backend.resetZoom();
     }
 
+    void pinchZoomDoesNotPanOnceItHasZoomed() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *flick = window->findChild<QObject *>(QStringLiteral("editorFlick"));
+        QVERIFY(flick);
+
+        QVariant allowed;
+        QVERIFY(QMetaObject::invokeMethod(flick, "pinchAllowsPan",
+                                          Q_RETURN_ARG(QVariant, allowed),
+                                          Q_ARG(QVariant, 1.0),
+                                          Q_ARG(QVariant, false)));
+        QCOMPARE(allowed.toBool(), true);
+
+        QVERIFY(QMetaObject::invokeMethod(flick, "pinchAllowsPan",
+                                          Q_RETURN_ARG(QVariant, allowed),
+                                          Q_ARG(QVariant, 1.3),
+                                          Q_ARG(QVariant, false)));
+        QCOMPARE(allowed.toBool(), false);
+
+        QVERIFY(QMetaObject::invokeMethod(flick, "pinchAllowsPan",
+                                          Q_RETURN_ARG(QVariant, allowed),
+                                          Q_ARG(QVariant, 1.3),
+                                          Q_ARG(QVariant, true)));
+        QCOMPARE(allowed.toBool(), false);
+
+        QVERIFY(QMetaObject::invokeMethod(flick, "pinchAllowsWheel",
+                                          Q_RETURN_ARG(QVariant, allowed),
+                                          Q_ARG(QVariant, true)));
+        QCOMPARE(allowed.toBool(), false);
+
+        QVERIFY(QMetaObject::invokeMethod(flick, "pinchAllowsWheel",
+                                          Q_RETURN_ARG(QVariant, allowed),
+                                          Q_ARG(QVariant, false)));
+        QCOMPARE(allowed.toBool(), true);
+    }
+
     void remembersLastSaveDirectory() {
         QTemporaryDir saveDirectory;
         QVERIFY(saveDirectory.isValid());
