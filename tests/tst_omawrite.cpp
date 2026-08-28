@@ -377,8 +377,7 @@ private slots:
         QVERIFY(columnWidth > 0);
         QVERIFY(originX > 0);
 
-        QVERIFY(QMetaObject::invokeMethod(window.data(), "zoomToPercent",
-                                          Q_ARG(QVariant, 70)));
+        backend.zoomToPercent(70);
         QCOMPARE(backend.zoomFactor(), 0.7);
         QCOMPARE(canvas->property("x").toReal(), originX);
         QCOMPARE(editor->property("font").value<QFont>().pixelSize(), 20);
@@ -390,8 +389,7 @@ private slots:
                             .arg(visualAt70)
                             .arg(columnWidth)));
 
-        QVERIFY(QMetaObject::invokeMethod(window.data(), "zoomToPercent",
-                                          Q_ARG(QVariant, 300)));
+        backend.zoomToPercent(300);
         QCOMPARE(backend.zoomFactor(), 3.0);
         QCOMPARE(canvas->property("x").toReal(), originX);
         QCOMPARE(editor->property("font").value<QFont>().pixelSize(), 20);
@@ -489,8 +487,8 @@ private slots:
         QTRY_VERIFY(editor->property("cursorRectangle").toRectF().y() > 0);
 
         const qreal beforeY = editor->property("cursorRectangle").toRectF().y();
-        QVERIFY(QMetaObject::invokeMethod(window.data(), "zoomToPercent",
-                                          Q_ARG(QVariant, 300)));
+        for (int i = 0; i < 20; ++i)
+            QVERIFY(QMetaObject::invokeMethod(window.data(), "zoomIn"));
         QCOMPARE(backend.zoomFactor(), 3.0);
 
         const QRectF caret = editor->property("cursorRectangle").toRectF();

@@ -110,12 +110,6 @@ ApplicationWindow {
         editorFlick.restoreZoomAnchor();
     }
 
-    function zoomToPercent(percent) {
-        editorFlick.captureZoomAnchor();
-        backend.zoomToPercent(percent);
-        editorFlick.restoreZoomAnchor();
-    }
-
     function updateSearch() {
         var matches = [];
         var query = searchField.text;
@@ -374,7 +368,7 @@ ApplicationWindow {
         standardButtons: Dialog.Close
         anchors.centerIn: parent
         contentItem: Label {
-            text: "Ctrl+S  Save\nCtrl+Shift+S  Save As\nCtrl+O  Open\nCtrl+N  New Window\nCtrl+F  Find\nCtrl+H  Find and Replace\nCtrl+B  Bold\nCtrl+I  Italic\nCtrl+K  Link\nCtrl+P  Print\nCtrl+= / Ctrl++  Zoom In\nCtrl+- / Ctrl+_  Zoom Out\nCtrl+0  Reset Zoom\nF11 / Super+F  Fullscreen\nCtrl+?  Shortcuts"
+            text: "Ctrl+S  Save\nCtrl+Shift+S  Save As\nCtrl+O  Open\nCtrl+N  New Window\nCtrl+F  Find\nCtrl+H  Find and Replace\nCtrl+B  Bold\nCtrl+I  Italic\nCtrl+K  Link\nCtrl+P  Print\nCtrl+=  Zoom In\nCtrl+-  Zoom Out\nCtrl+0  Reset Zoom\nF11 / Super+F  Fullscreen\nCtrl+?  Shortcuts"
             lineHeight: 1.5
         }
     }
@@ -547,26 +541,16 @@ ApplicationWindow {
                 return Math.max(0, Math.min(Math.max(0, contentHeight - height), y));
             }
 
-            function clampContentX(x) {
-                return Math.max(0, Math.min(Math.max(0, contentWidth - width), x));
-            }
-
-            function toContentX(documentX) {
-                return canvas.x + documentX * win.zoomFactor;
-            }
-
             function toContentY(documentY) {
                 return canvas.y + documentY * win.zoomFactor;
             }
 
             property bool zoomAnchorCaptured: false
-            property real zoomAnchorViewX: 0
             property real zoomAnchorViewY: 0
 
             function captureZoomAnchor() {
                 if (zoomAnchorCaptured)
                     return;
-                zoomAnchorViewX = toContentX(editor.cursorRectangle.x) - contentX;
                 zoomAnchorViewY = toContentY(editor.cursorRectangle.y) - contentY;
                 zoomAnchorCaptured = true;
             }
@@ -574,8 +558,6 @@ ApplicationWindow {
             function restoreZoomAnchor() {
                 if (!zoomAnchorCaptured)
                     return;
-                contentX = clampContentX(
-                    toContentX(editor.cursorRectangle.x) - zoomAnchorViewX);
                 scrollTo(clampContentY(
                     toContentY(editor.cursorRectangle.y) - zoomAnchorViewY));
                 zoomAnchorCaptured = false;
@@ -606,14 +588,6 @@ ApplicationWindow {
                     scrollTo(Math.min(maxContentY, cursorBottom + margin - height));
                 else if (cursorTop - margin < contentY)
                     scrollTo(Math.max(0, cursorTop - margin));
-
-                var cursorLeft = toContentX(editor.cursorRectangle.x);
-                var cursorRight = toContentX(editor.cursorRectangle.x
-                                             + editor.cursorRectangle.width);
-                if (cursorRight + margin > contentX + width)
-                    contentX = clampContentX(cursorRight + margin - width);
-                else if (cursorLeft - margin < contentX)
-                    contentX = clampContentX(cursorLeft - margin);
             }
 
             Item {
