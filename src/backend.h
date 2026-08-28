@@ -10,6 +10,8 @@
 #include <QVariantList>
 #include <memory>
 
+#include "viewzoom.h"
+
 class MarkdownHighlighter;
 class QTextDocument;
 class QWindow;
@@ -24,6 +26,7 @@ class Backend : public QObject {
     Q_PROPERTY(int wordCount READ wordCount NOTIFY wordCountChanged)
     Q_PROPERTY(bool darkMode READ darkMode WRITE setDarkMode NOTIFY darkModeChanged)
     Q_PROPERTY(qreal textScale READ textScale WRITE setTextScale NOTIFY textScaleChanged)
+    Q_PROPERTY(qreal zoomFactor READ zoomFactor NOTIFY zoomFactorChanged)
     Q_PROPERTY(QString themeBackground READ themeBackground NOTIFY themeColorsChanged)
     Q_PROPERTY(QString themeForeground READ themeForeground NOTIFY themeColorsChanged)
     Q_PROPERTY(QString themeAccent READ themeAccent NOTIFY themeColorsChanged)
@@ -45,6 +48,11 @@ public:
     void setDarkMode(bool darkMode);
     qreal textScale() const { return m_textScale; }
     void setTextScale(qreal textScale);
+    qreal zoomFactor() const { return m_zoom.factor(); }
+    Q_INVOKABLE void zoomIn();
+    Q_INVOKABLE void zoomOut();
+    Q_INVOKABLE void resetZoom();
+    Q_INVOKABLE void zoomToPercent(int percent);
     QString themeBackground() const { return m_themeBackground; }
     QString themeForeground() const { return m_themeForeground; }
     QString themeAccent() const { return m_themeAccent; }
@@ -82,6 +90,7 @@ signals:
     void wordCountChanged();
     void darkModeChanged();
     void textScaleChanged();
+    void zoomFactorChanged();
     void themeColorsChanged();
     void closeAfterSave();
     void openDialogRequested();
@@ -110,6 +119,8 @@ private:
     void watchCurrentFile();
     void loadOmarchyTheme();
     void watchOmarchyTheme();
+    void setZoom(ViewZoom zoom);
+    void persistZoom() const;
 
     QUrl m_fileUrl;
     bool m_modified = false;
@@ -117,6 +128,7 @@ private:
     int m_wordCount = 0;
     bool m_darkMode = true;
     qreal m_textScale = 1.0;
+    ViewZoom m_zoom;
     bool m_loading = false;
     bool m_closeAfterSave = false;
     bool m_formattingTypography = false;

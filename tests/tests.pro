@@ -10,6 +10,7 @@ SOURCES += \
     ../src/markdownhighlighter.cpp
 HEADERS += \
     ../src/backend.h \
-    ../src/markdownhighlighter.h
+    ../src/markdownhighlighter.h \
+    ../src/viewzoom.h
 
 QT += widgets printsupport quickcontrols2 quickdialogs2 dbus
