@@ -560,26 +560,24 @@ ApplicationWindow {
             }
 
             property bool zoomAnchorCaptured: false
-            property real zoomAnchorDocX: 0
-            property real zoomAnchorDocY: 0
             property real zoomAnchorViewX: 0
             property real zoomAnchorViewY: 0
 
             function captureZoomAnchor() {
                 if (zoomAnchorCaptured)
                     return;
-                zoomAnchorDocX = editor.cursorRectangle.x;
-                zoomAnchorDocY = editor.cursorRectangle.y;
-                zoomAnchorViewX = toContentX(zoomAnchorDocX) - contentX;
-                zoomAnchorViewY = toContentY(zoomAnchorDocY) - contentY;
+                zoomAnchorViewX = toContentX(editor.cursorRectangle.x) - contentX;
+                zoomAnchorViewY = toContentY(editor.cursorRectangle.y) - contentY;
                 zoomAnchorCaptured = true;
             }
 
             function restoreZoomAnchor() {
                 if (!zoomAnchorCaptured)
                     return;
-                contentX = clampContentX(toContentX(zoomAnchorDocX) - zoomAnchorViewX);
-                scrollTo(clampContentY(toContentY(zoomAnchorDocY) - zoomAnchorViewY));
+                contentX = clampContentX(
+                    toContentX(editor.cursorRectangle.x) - zoomAnchorViewX);
+                scrollTo(clampContentY(
+                    toContentY(editor.cursorRectangle.y) - zoomAnchorViewY));
                 zoomAnchorCaptured = false;
             }
 

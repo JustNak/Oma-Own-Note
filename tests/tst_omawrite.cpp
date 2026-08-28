@@ -459,6 +459,64 @@ private slots:
         backend.resetZoom();
     }
 
+    void zoomChordsKeepCaretInViewAfterWrapReflow() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QObject *flick = window->findChild<QObject *>(QStringLiteral("editorFlick"));
+        QVERIFY(editor);
+        QVERIFY(flick);
+
+        QString paragraph;
+        for (int i = 0; i < 400; ++i) {
+            if (i)
+                paragraph += QLatin1Char(' ');
+            paragraph += QStringLiteral("word");
+        }
+        editor->setProperty("text", paragraph.repeated(8));
+        QVERIFY(QMetaObject::invokeMethod(editor, "forceActiveFocus"));
+        editor->setProperty("cursorPosition", editor->property("text").toString().size() / 2);
+
+        QTRY_VERIFY(editor->property("cursorRectangle").toRectF().y() > 0);
+
+        const qreal beforeY = editor->property("cursorRectangle").toRectF().y();
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "zoomToPercent",
+                                          Q_ARG(QVariant, 300)));
+        QCOMPARE(backend.zoomFactor(), 3.0);
+
+        const QRectF caret = editor->property("cursorRectangle").toRectF();
+        QVERIFY2(caret.y() > beforeY + 20,
+                 qPrintable(QStringLiteral("wrap did not reflow caret y %1 -> %2")
+                            .arg(beforeY)
+                            .arg(caret.y())));
+
+        const qreal zoom = backend.zoomFactor();
+        const qreal canvasY = window->findChild<QObject *>(QStringLiteral("editorCanvas"))
+                                  ->property("y").toReal();
+        const qreal caretTop = canvasY + caret.y() * zoom;
+        const qreal caretBottom = canvasY + (caret.y() + caret.height()) * zoom;
+        const qreal contentY = flick->property("contentY").toReal();
+        const qreal viewHeight = flick->property("height").toReal();
+        QVERIFY2(caretBottom + 1 >= contentY && caretTop <= contentY + viewHeight + 1,
+                 qPrintable(QStringLiteral(
+                                "caret [%1, %2] outside view contentY=%3 height=%4")
+                                .arg(caretTop)
+                                .arg(caretBottom)
+                                .arg(contentY)
+                                .arg(viewHeight)));
+
+        backend.resetZoom();
+    }
+
     void remembersLastSaveDirectory() {
         QTemporaryDir saveDirectory;
         QVERIFY(saveDirectory.isValid());
