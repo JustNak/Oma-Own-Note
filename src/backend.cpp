@@ -35,6 +35,7 @@
 
 constexpr qreal typoraLineHeightPercent = 140;
 const QString lastSaveDirectorySetting = QStringLiteral("file/lastSaveDirectory");
+const QString zoomPercentSetting = QStringLiteral("view/zoomPercent");
 
 QString Backend::normalizedLinkUrl(const QString &clipboardText) {
     QString candidate = clipboardText.trimmed();
@@ -127,6 +128,12 @@ Backend::Backend(QObject *parent) : QObject(parent) {
         loadOmarchyTheme();
         watchOmarchyTheme();
     });
+
+    const int raw = QSettings().value(zoomPercentSetting,
+                                      ViewZoom::kDefaultPercent).toInt();
+    m_zoom = ViewZoom::fromPercent(raw);
+    if (m_zoom.percent() != raw)
+        persistZoom();
 }
 
 Backend::~Backend() = default;
@@ -164,6 +171,34 @@ void Backend::setTextScale(qreal textScale) {
 
     m_textScale = textScale;
     emit textScaleChanged();
+}
+
+void Backend::zoomIn() {
+    setZoom(m_zoom.stepped(1));
+}
+
+void Backend::zoomOut() {
+    setZoom(m_zoom.stepped(-1));
+}
+
+void Backend::resetZoom() {
+    setZoom(ViewZoom{});
+}
+
+void Backend::zoomToPercent(int percent) {
+    setZoom(ViewZoom::fromPercent(percent));
+}
+
+void Backend::setZoom(ViewZoom zoom) {
+    if (zoom == m_zoom)
+        return;
+    m_zoom = zoom;
+    persistZoom();
+    emit zoomFactorChanged();
+}
+
+void Backend::persistZoom() const {
+    QSettings().setValue(zoomPercentSetting, m_zoom.percent());
 }
 
 void Backend::attachDocument(QObject *textDocument) {
