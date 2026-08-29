@@ -10,7 +10,7 @@
 #include "markdownhighlighter.h"
 #include "viewzoom.h"
 
-class OmawriteTest : public QObject {
+class OmaOwnNoteTest : public QObject {
     Q_OBJECT
 
 private slots:
@@ -175,6 +175,7 @@ private slots:
         QVERIFY2(component.isReady(), qPrintable(component.errorString()));
         QScopedPointer<QObject> window(component.create());
         QVERIFY2(window, qPrintable(component.errorString()));
+        QVERIFY(window->property("title").toString().endsWith(QStringLiteral("Oma Own Note")));
 
         QVERIFY(window->findChild<QObject *>(QStringLiteral("sourceEditor")));
         QVERIFY(!window->findChild<QObject *>(QStringLiteral("renderedPreview")));
@@ -547,5 +548,5 @@ private:
     QTemporaryDir m_settingsDirectory;
 };
 
-QTEST_MAIN(OmawriteTest)
-#include "tst_omawrite.moc"
+QTEST_MAIN(OmaOwnNoteTest)
+#include "tst_oma_own_note.moc"
