@@ -4,10 +4,6 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 cd "$ROOT"
 
-# Product names left over from the omawrite fork.
-# Omarchy theme paths under ~/.local/state/omarchy stay. Those are runtime files.
-# README.md may name the upstream repo URL once.
-
 allowed_upstream='https://github.com/omacom-io/omawrite'
 
 hits="$(mktemp)"
