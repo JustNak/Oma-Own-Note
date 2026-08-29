@@ -4,9 +4,11 @@ A Markdown writing app built with Qt Quick and C++. It follows the desktop dark 
 
 This repository is a personal fork of https://github.com/omacom-io/omawrite.
 
+Qt settings and crash-recovery files live under `JustNak/oma-own-note`. Files from an upstream install stay where they are.
+
 ## Build
 
-You need Qt 6 (`qt6-base`, `qt6-declarative`, `qt6-quickcontrols2`), a C++17 compiler, and `xdg-desktop-portal` with a portal backend.
+You need Qt 6.5 or newer (`qt6-base`, `qt6-declarative`, `qt6-quickcontrols2`), a C++17 compiler, and `xdg-desktop-portal` with a portal backend. `src/systemtheme.cpp` uses `Qt::ColorScheme`, which is not in Qt 6.4.
 
 ```
 ./bin/build

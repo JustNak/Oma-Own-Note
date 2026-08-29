@@ -6,16 +6,37 @@ cd "$ROOT"
 
 allowed_upstream='https://github.com/omacom-io/omawrite'
 
+for required in \
+    'oma-own-note.pro:TARGET = oma-own-note' \
+    'src/main.cpp:oma-own-note' \
+    'src/main.cpp:JustNak'
+do
+    file="${required%%:*}"
+    needle="${required#*:}"
+    if ! git grep -qF "$needle" -- "$file"; then
+        echo "missing $needle in $file" >&2
+        exit 1
+    fi
+done
+
 hits="$(mktemp)"
 trap 'rm -f "$hits"' EXIT
 
-if ! git grep -nI -E 'omawrite|Omawrite|Omacom|omacom\.io' -- . \
+set +e
+git grep -nI -E 'omawrite|Omawrite|Omacom|omacom\.io' -- . \
     ':!.audit' \
     ':!scripts/check-identity.sh' \
     >"$hits"
-then
+status=$?
+set -e
+
+if [ "$status" -eq 1 ]; then
     echo "identity check passed"
     exit 0
+fi
+if [ "$status" -ne 0 ]; then
+    echo "git grep failed ($status)" >&2
+    exit "$status"
 fi
 
 bad=0
