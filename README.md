@@ -1,14 +1,28 @@
-# Omawrite
+# Oma Own Note
 
-A dead-simple Markdown writing app built with Qt Quick and C++ that automatically follows system dark/light mode.
+A Markdown writing app built with Qt Quick and C++. It follows the desktop dark and light theme.
 
-<img width="2948" height="3227" alt="screenshot-2026-06-23_15-24-08" src="https://github.com/user-attachments/assets/4e930c0d-edda-4046-b444-a59eff523329" />
-<img width="2948" height="3227" alt="screenshot-2026-06-23_15-23-23" src="https://github.com/user-attachments/assets/8ced7c26-961b-4ded-b263-84403001a951" />
+This repository is a personal fork of https://github.com/omacom-io/omawrite.
 
+Qt settings and crash-recovery files live under `JustNak/oma-own-note`. Files from an upstream install stay where they are.
 
-## Install
+## Build
 
-Install via the Omarchy Package Repository via the `omawrite` package. It's installed by default in new installations of Omarchy (from Quattro forward).
+You need Qt 6.5 or newer (`qt6-base`, `qt6-declarative`, `qt6-quickcontrols2`), a C++17 compiler, and `xdg-desktop-portal` with a portal backend. `src/systemtheme.cpp` uses `Qt::ColorScheme`, which is not in Qt 6.4.
+
+```
+./bin/build
+```
+
+The binary is `build/oma-own-note`.
+
+```
+./bin/test
+```
+
+`bin/test` runs `scripts/check-identity.sh`, then the offscreen Qt tests.
+
+On Arch, `./bin/install` builds the `oma-own-note` package with `makepkg`.
 
 ## Shortcuts
 
@@ -16,7 +30,7 @@ Install via the Omarchy Package Repository via the `omawrite` package. It's inst
 - `Ctrl+Shift+S` saves as.
 - `Ctrl+O` opens a Markdown file through the portal picker.
 - `Ctrl+P` opens the system print dialog.
-- `Ctrl+N` opens a new Omawrite window.
+- `Ctrl+N` opens a new Oma Own Note window.
 - `Ctrl+Z`, `Ctrl+Shift+Z`, and `Ctrl+Y` handle undo and redo.
 - `Super+F` toggles fullscreen. Qt maps this key as `Meta+F`.
 - `Ctrl+F` searches the document. Use `Enter` or `Ctrl+G` for the next match and `Shift+Enter` for the previous match.
@@ -25,18 +39,12 @@ Install via the Omarchy Package Repository via the `omawrite` package. It's inst
 - `Ctrl+?` shows the keyboard shortcut reference.
 - `Ctrl+=` zooms the writing canvas in. `Ctrl+-` zooms out. `Ctrl+0` resets to 100%.
 
-Unsaved drafts are recovered after an abnormal exit. Omawrite also watches open files
-and warns before an external change can replace local work.
+Unsaved drafts are recovered after an abnormal exit. Oma Own Note also watches open files and warns before an external change can replace local work.
 
-Text follows the desktop text size — `omarchy display text size`, or GNOME's
-`text-scaling-factor` — and re-flows without a restart. The default of 12px leaves
-Omawrite at the size it is designed around; larger and smaller sizes scale from there.
+Text follows the desktop text size. On Omarchy that is `omarchy display text size`. Elsewhere it is GNOME's `text-scaling-factor`. The default of 12px leaves the editor at the size it is designed around. Larger and smaller sizes scale from there.
 
-## Requirements
+If Omarchy is installed, the app reads `~/.local/state/omarchy/current/theme/colors.toml` and follows theme changes. Without that file it uses the built-in dark and light colors.
 
-- Qt 6: `qt6-base`, `qt6-declarative`, `qt6-quickcontrols2`
-- `xdg-desktop-portal` and a portal backend
+## Fonts
 
-The iA Writer Mono font is bundled under the SIL Open Font License 1.1; see
-`fonts/OFL.txt`. The font is copyright Information Architects Inc. and based on
-IBM Plex, copyright IBM Corp.
+The iA Writer Mono font is bundled under the SIL Open Font License 1.1. See `fonts/OFL.txt`. The font is copyright Information Architects Inc. and based on IBM Plex, copyright IBM Corp.

@@ -12,6 +12,7 @@ fi
 
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
+"$ROOT/scripts/check-identity.sh"
 "$QMAKE" "$ROOT/tests/tests.pro"
 make -j"$(nproc 2>/dev/null || echo 1)"
-QT_QPA_PLATFORM=offscreen ./tst_omawrite
+QT_QPA_PLATFORM=offscreen ./tst_oma_own_note
