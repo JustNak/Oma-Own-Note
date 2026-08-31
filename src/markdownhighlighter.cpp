@@ -103,28 +103,14 @@ void MarkdownHighlighter::rebuildFormats() {
     m_currentSearchFormat.setBackground(m_darkMode ? QColor(QStringLiteral("#b36b20"))
                                                    : QColor(QStringLiteral("#ffad42")));
 
-    const auto mixToward = [](const QColor &from, const QColor &to, qreal amount) {
-        return QColor::fromRgbF(from.redF() + (to.redF() - from.redF()) * amount,
-                                from.greenF() + (to.greenF() - from.greenF()) * amount,
-                                from.blueF() + (to.blueF() - from.blueF()) * amount,
-                                from.alphaF() + (to.alphaF() - from.alphaF()) * amount);
-    };
-
     m_tableHeaderFormat = QTextCharFormat();
     m_tableHeaderFormat.setForeground(text);
     m_tableHeaderFormat.setFontWeight(QFont::Bold);
-    m_tableHeaderFormat.setBackground(mixToward(background, text, 0.14));
 
-    m_tableBodyFormat = QTextCharFormat();
-    m_tableBodyFormat.setForeground(text);
-    m_tableBodyFormat.setBackground(mixToward(background, text, 0.07));
-
-    m_tableRuleFormat = QTextCharFormat();
-    m_tableRuleFormat.setForeground(marker);
-
-    m_tableHairlineFormat = QTextCharFormat();
-    m_tableHairlineFormat.setForeground(marker);
-    m_tableHairlineFormat.setBackground(marker);
+    // Pipes and the separator stay full-width so columns keep their grid.
+    // They are painted in the paper color; TableChrome draws the box.
+    m_tableHiddenSyntaxFormat = QTextCharFormat();
+    m_tableHiddenSyntaxFormat.setForeground(background);
 }
 
 void MarkdownHighlighter::highlightBlock(const QString &text) {
@@ -274,7 +260,7 @@ void MarkdownHighlighter::highlightTable(const QString &text) {
         return;
 
     if (line.kind == TableLine::Kind::Separator) {
-        setFormat(0, text.length(), m_tableHairlineFormat);
+        setFormat(0, text.length(), m_tableHiddenSyntaxFormat);
         return;
     }
 
@@ -282,13 +268,12 @@ void MarkdownHighlighter::highlightTable(const QString &text) {
     if (next.isValid() && isTableSeparator(next.text()))
         line.kind = TableLine::Kind::Header;
 
-    const QTextCharFormat &cellFormat = line.kind == TableLine::Kind::Header
-        ? m_tableHeaderFormat
-        : m_tableBodyFormat;
-    for (const Span &cell : line.cells)
-        setFormat(cell.start, cell.length, cellFormat);
+    if (line.kind == TableLine::Kind::Header) {
+        for (const Span &cell : line.cells)
+            setFormat(cell.start, cell.length, m_tableHeaderFormat);
+    }
     for (const Span &hidden : line.hidden)
-        setFormat(hidden.start, hidden.length, m_tableRuleFormat);
+        setFormat(hidden.start, hidden.length, m_tableHiddenSyntaxFormat);
 }
 
 void MarkdownHighlighter::highlightInline(const QString &text) {

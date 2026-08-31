@@ -12,6 +12,7 @@
 
 #include "backend.h"
 #include "systemtheme.h"
+#include "tablechrome.h"
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
@@ -53,6 +54,8 @@ int main(int argc, char *argv[]) {
         applyInterfaceFont(textScale);
         backend.setTextScale(textScale);
     });
+
+    TableChrome::registerQmlType();
 
     QQmlApplicationEngine engine;
     QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app,

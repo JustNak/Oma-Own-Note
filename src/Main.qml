@@ -4,6 +4,7 @@ import QtQuick.Controls.Material
 import QtQuick.Dialogs as Dialogs
 import QtQuick.Layouts
 import QtQuick.Window
+import OmaOwnNote 1.0
 import "EditorMutations.js" as EditorMutations
 
 ApplicationWindow {
@@ -676,6 +677,17 @@ ApplicationWindow {
                 clip: false
                 x: Math.round((editorFlick.width - win.editorWidth) / 2)
                 y: Math.max(42, Math.round(win.height * 0.05))
+
+            TableChrome {
+                id: tableChrome
+                objectName: "tableChrome"
+                anchors.fill: editor
+                z: -1
+                textDocument: editor.textDocument
+                paper: win.pageColor
+                textColor: win.textColor
+                ruleColor: win.darkMode ? "#4f525a" : "#aeb1b5"
+            }
 
             TextEdit {
                 id: editor

@@ -73,7 +73,5 @@ private:
     QTextCharFormat m_searchFormat;
     QTextCharFormat m_currentSearchFormat;
     QTextCharFormat m_tableHeaderFormat;
-    QTextCharFormat m_tableBodyFormat;
-    QTextCharFormat m_tableRuleFormat;
-    QTextCharFormat m_tableHairlineFormat;
+    QTextCharFormat m_tableHiddenSyntaxFormat;
 };
