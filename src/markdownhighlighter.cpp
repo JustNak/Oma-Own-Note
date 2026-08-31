@@ -219,6 +219,10 @@ bool MarkdownHighlighter::isTableRow(const QString &text) {
     return trimmed.startsWith(QLatin1Char('|')) && trimmed.indexOf(QLatin1Char('|'), 1) >= 0;
 }
 
+qreal MarkdownHighlighter::tableDataRowLineHeight(const QFont &font) {
+    return qMax(qreal(1), QFontMetricsF(font).lineSpacing() * qreal(1.4));
+}
+
 bool MarkdownHighlighter::isTableSeparator(const QString &text) {
     const QString trimmed = text.trimmed();
     if (!isTableRow(trimmed))

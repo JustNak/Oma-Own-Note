@@ -458,7 +458,7 @@ ApplicationWindow {
             anchors.leftMargin: 24
             anchors.rightMargin: 24
             clip: true
-            contentWidth: width
+            contentWidth: Math.max(width, canvas.x + canvas.width * canvas.scale + 24)
             contentHeight: Math.max(height, canvas.y + (editor.implicitHeight + 20) * canvas.scale + 220)
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: ScrollBar {
@@ -473,6 +473,10 @@ ApplicationWindow {
                 // anchors. Padding stops the thumb, the inset the track.
                 bottomPadding: win.scaledSize(32)
                 bottomInset: win.scaledSize(32)
+            }
+            ScrollBar.horizontal: ScrollBar {
+                policy: ScrollBar.AsNeeded
+                active: hovered || pressed || scrollLinger.running
             }
 
             Timer {
@@ -577,8 +581,18 @@ ApplicationWindow {
                 acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                 onWheel: function(wheel) {
                     scrollLinger.restart();
-                    if (wheel.pixelDelta.y !== 0)
-                        editorFlick.scrollTo(editorFlick.clampContentY(editorFlick.contentY - wheel.pixelDelta.y));
+                    var shift = (wheel.modifiers & Qt.ShiftModifier) !== 0;
+                    if (wheel.pixelDelta.x !== 0)
+                        editorFlick.scrollToX(editorFlick.clampContentX(
+                            editorFlick.contentX - wheel.pixelDelta.x));
+                    if (shift && wheel.pixelDelta.y !== 0 && wheel.pixelDelta.x === 0)
+                        editorFlick.scrollToX(editorFlick.clampContentX(
+                            editorFlick.contentX - wheel.pixelDelta.y));
+                    else if (wheel.pixelDelta.y !== 0)
+                        editorFlick.scrollTo(editorFlick.clampContentY(
+                            editorFlick.contentY - wheel.pixelDelta.y));
+                    else if (shift || wheel.angleDelta.x !== 0)
+                        editorFlick.scrollByWheelX(wheel);
                     else
                         editorFlick.scrollByWheel(wheel);
                     wheel.accepted = true;
@@ -605,6 +619,14 @@ ApplicationWindow {
                     wheelScroll.begin(contentY, target, wheelDuration(target - contentY), 0);
             }
 
+            function scrollByWheelX(wheel) {
+                var delta = wheel.angleDelta.x !== 0 ? wheel.angleDelta.x : wheel.angleDelta.y;
+                var notches = delta / 120;
+                if (notches === 0)
+                    return;
+                scrollToX(clampContentX(contentX - notches * wheelStep));
+            }
+
             // Chromium's inverse-delta duration: 200ms for a single notch,
             // ramping down to 100ms once 480px are outstanding.
             function wheelDuration(delta) {
@@ -616,8 +638,16 @@ ApplicationWindow {
                 return Math.max(0, Math.min(Math.max(0, contentHeight - height), y));
             }
 
+            function clampContentX(x) {
+                return Math.max(0, Math.min(Math.max(0, contentWidth - width), x));
+            }
+
             function toContentY(documentY) {
                 return canvas.y + documentY * win.zoomFactor;
+            }
+
+            function toContentX(documentX) {
+                return canvas.x + documentX * win.zoomFactor;
             }
 
             property bool zoomAnchorCaptured: false
@@ -650,6 +680,10 @@ ApplicationWindow {
                 contentY = snapToPixel(y);
             }
 
+            function scrollToX(x) {
+                contentX = snapToPixel(x);
+            }
+
             // Keep the editing caret within the viewport so writing past the
             // bottom edge scrolls the page along with the text.
             function ensureCursorVisible() {
@@ -663,6 +697,15 @@ ApplicationWindow {
                     scrollTo(Math.min(maxContentY, cursorBottom + margin - height));
                 else if (cursorTop - margin < contentY)
                     scrollTo(Math.max(0, cursorTop - margin));
+
+                var cursorLeft = toContentX(editor.cursorRectangle.x);
+                var cursorRight = toContentX(editor.cursorRectangle.x
+                                             + editor.cursorRectangle.width);
+                var maxContentX = Math.max(0, contentWidth - width);
+                if (cursorRight + margin > contentX + width)
+                    scrollToX(Math.min(maxContentX, cursorRight + margin - width));
+                else if (cursorLeft - margin < contentX)
+                    scrollToX(Math.max(0, cursorLeft - margin));
             }
 
             Item {
@@ -697,8 +740,11 @@ ApplicationWindow {
                 objectName: "sourceEditor"
                 x: 0
                 // Inverse of canvas.scale so wrap still fills the 65-character
-                // column after zoom.
-                width: Math.round(win.editorWidth / Math.max(win.zoomFactor, 0.01))
+                // column after zoom. A table that cannot wrap grows the wrap
+                // width instead; the flickable then pans horizontally.
+                width: Math.max(
+                    Math.round(win.editorWidth / Math.max(win.zoomFactor, 0.01)),
+                    Math.ceil(tableChrome.naturalWidth))
                 height: parent.height
                 text: ""
                 textFormat: TextEdit.PlainText

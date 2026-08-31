@@ -18,6 +18,7 @@ class TableChrome : public QQuickPaintedItem {
     Q_PROPERTY(QColor textColor READ textColor WRITE setTextColor NOTIFY textColorChanged)
     Q_PROPERTY(QColor ruleColor READ ruleColor WRITE setRuleColor NOTIFY ruleColorChanged)
     Q_PROPERTY(qreal viewScale READ viewScale WRITE setViewScale NOTIFY viewScaleChanged)
+    Q_PROPERTY(qreal naturalWidth READ naturalWidth NOTIFY naturalWidthChanged)
 
 public:
     struct TableBox {
@@ -34,6 +35,7 @@ public:
     static void paintTables(QPainter *painter, QTextDocument *document,
                             const QColor &paper, const QColor &text,
                             const QColor &rule);
+    static qreal naturalWidthOf(QTextDocument *document);
 
     QObject *textDocument() const { return m_textDocumentObject; }
     void setTextDocument(QObject *textDocument);
@@ -50,6 +52,8 @@ public:
     qreal viewScale() const { return m_viewScale; }
     void setViewScale(qreal viewScale);
 
+    qreal naturalWidth() const { return m_naturalWidth; }
+
     void paint(QPainter *painter) override;
 
 signals:
@@ -58,6 +62,7 @@ signals:
     void textColorChanged();
     void ruleColorChanged();
     void viewScaleChanged();
+    void naturalWidthChanged();
 
 protected:
     void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
@@ -65,6 +70,7 @@ protected:
 private:
     void bindDocument(QTextDocument *document);
     void syncTextureSize();
+    void refreshNaturalWidth();
 
     QPointer<QObject> m_textDocumentObject;
     QPointer<QTextDocument> m_document;
@@ -72,4 +78,5 @@ private:
     QColor m_textColor = QColor(QStringLiteral("#eeeeee"));
     QColor m_ruleColor = QColor(QStringLiteral("#eeeeee"));
     qreal m_viewScale = 1;
+    qreal m_naturalWidth = 0;
 };

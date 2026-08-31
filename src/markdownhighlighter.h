@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QFont>
 #include <QList>
 #include <QRegularExpression>
 #include <QSyntaxHighlighter>
@@ -45,7 +46,10 @@ public:
     static bool isFenceLine(const QString &text);
     static TableLine parseTableLine(const QString &text);
 
-    static constexpr qreal tableSeparatorLineHeight = 3;
+    // Collapsed to a single shared rule between header and body so it is not
+    // absorbed into one cell's height.
+    static constexpr qreal tableSeparatorLineHeight = 1;
+    static qreal tableDataRowLineHeight(const QFont &font);
 
 protected:
     void highlightBlock(const QString &text) override;
