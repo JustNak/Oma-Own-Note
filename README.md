@@ -35,7 +35,8 @@ On Arch, `./bin/install` builds the `oma-own-note` package with `makepkg`.
 - `Super+F` toggles fullscreen. Qt maps this key as `Meta+F`.
 - `Ctrl+F` searches the document. Use `Enter` or `Ctrl+G` for the next match and `Shift+Enter` for the previous match.
 - `Ctrl+H` opens find and replace.
-- `Ctrl+B`, `Ctrl+I`, and `Ctrl+K` insert bold, italic, and link Markdown.
+- `Ctrl+Tab` opens the insert palette beside the caret. Type to filter, then insert headings, lists, a table, an image, and other Markdown.
+- `Ctrl+B`, `Ctrl+I`, and `Ctrl+K` insert bold, italic, and link Markdown. Tab moves between cells inside a pipe table.
 - `Ctrl+?` shows the keyboard shortcut reference.
 - `Ctrl+=` zooms the writing canvas in. `Ctrl+-` zooms out. `Ctrl+0` resets to 100%.
 
