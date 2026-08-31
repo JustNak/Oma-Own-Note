@@ -2,6 +2,8 @@
 #include <QColor>
 #include <QFont>
 #include <QFontMetricsF>
+#include <QImage>
+#include <QPainter>
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
@@ -380,6 +382,12 @@ private slots:
             cursor.setPosition(block.position());
             cursor.setBlockFormat(format);
         }
+
+        QImage surface(1200, 200, QImage::Format_ARGB32_Premultiplied);
+        surface.fill(QColor(QStringLiteral("#1a2744")));
+        QPainter painter(&surface);
+        document.drawContents(&painter);
+        painter.end();
 
         const auto formatAt = [&document](int position) {
             const QTextBlock block = document.findBlock(position);
