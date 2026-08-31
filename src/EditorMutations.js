@@ -676,6 +676,17 @@ function cellContent(line, cell) {
         start++;
     while (end > start && (line.charAt(end - 1) === " " || line.charAt(end - 1) === "\t"))
         end--;
+    if (start >= end) {
+        // An all-whitespace cell has no content to point at. Collapse the caret
+        // to the cell's left column (just past the single leading pad space)
+        // instead of leaving it against the closing pipe, so text typed into an
+        // empty cell is left-aligned immediately rather than hugging the right
+        // border until the next Tab re-pads the row.
+        var left = cell.start;
+        if (left < cell.end && (line.charAt(left) === " " || line.charAt(left) === "\t"))
+            left++;
+        return { start: left, end: left };
+    }
     return { start: start, end: end };
 }
 
