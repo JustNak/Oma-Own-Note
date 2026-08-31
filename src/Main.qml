@@ -40,6 +40,7 @@ ApplicationWindow {
     property string pendingAction: ""
     property bool replaceOpen: false
     property bool awaitingPendingSave: false
+    property bool reflowingTable: false
     readonly property bool insertPaletteOpened: insertPalette.opened
 
     Material.theme: darkMode ? Material.Dark : Material.Light
@@ -984,6 +985,11 @@ ApplicationWindow {
                     var contentChanged = backend.editorTextChanged();
                     if (win.searchOpen && contentChanged)
                         win.updateSearch();
+                    if (!win.reflowingTable) {
+                        win.reflowingTable = true;
+                        EditorMutations.reflowTableAroundCaret(editor);
+                        win.reflowingTable = false;
+                    }
                 }
 
                 Text {

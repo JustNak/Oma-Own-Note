@@ -28,6 +28,10 @@ TextEdit {
     property string dividerMidText
     property int dividerMidCursor
     property string emptyCellTypedLine
+    property bool reflowedTableResult
+    property string reflowedTableText
+    property int reflowedTableCaret
+    property bool reflowNoopResult
 
     Component.onCompleted: {
         text = "";
@@ -117,5 +121,17 @@ TextEdit {
         oneColumnCursor = cursorPosition;
         if (selectionStart !== selectionEnd)
             oneColumnCursor = selectionStart;
+
+        // Live reflow: after typing "Score" the header cell is wider than the
+        // rest of the table; reflow must re-pad every row to uniform columns
+        // and keep the caret right after the typed text.
+        text = "| Name | Score    |     |\n| ---- | --- | --- |"
+             + "\n|      |     |     |\n|      |     |     |";
+        cursorPosition = 14;
+        reflowedTableResult = EditorMutations.reflowTableAroundCaret(this);
+        reflowedTableText = text;
+        reflowedTableCaret = cursorPosition;
+        // Running it again is a no-op once the table is already uniform.
+        reflowNoopResult = EditorMutations.reflowTableAroundCaret(this);
     }
 }

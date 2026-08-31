@@ -217,6 +217,12 @@ private slots:
                  QStringLiteral("![Cat \\[1\\]](<photo (2).png>)"));
         QVERIFY(editor->property("oneColumnMoved").toBool());
         QCOMPARE(editor->property("oneColumnCursor").toInt(), 18);
+        QVERIFY(editor->property("reflowedTableResult").toBool());
+        QCOMPARE(editor->property("reflowedTableText").toString(),
+                 QStringLiteral("| Name | Score |     |\n| ---- | ----- | --- |"
+                                "\n|      |       |     |\n|      |       |     |"));
+        QCOMPARE(editor->property("reflowedTableCaret").toInt(), 14);
+        QVERIFY(!editor->property("reflowNoopResult").toBool());
     }
 
     void insertPaletteOpensOnCtrlTab() {
