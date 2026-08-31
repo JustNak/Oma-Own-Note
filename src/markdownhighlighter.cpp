@@ -201,16 +201,36 @@ void MarkdownHighlighter::highlightMarkers(const QString &text) {
     }
 }
 
-void MarkdownHighlighter::highlightTable(const QString &text) {
+static bool isPipeTableLine(const QString &text) {
     const QString trimmed = text.trimmed();
-    if (!trimmed.startsWith(QLatin1Char('|')) || trimmed.indexOf(QLatin1Char('|'), 1) < 0)
+    return trimmed.startsWith(QLatin1Char('|')) && trimmed.indexOf(QLatin1Char('|'), 1) >= 0;
+}
+
+static bool isPipeSeparatorLine(const QString &text) {
+    const QString trimmed = text.trimmed();
+    if (!isPipeTableLine(trimmed))
+        return false;
+
+    bool sawDash = false;
+    for (const QChar character : trimmed) {
+        if (character == QLatin1Char('-')) {
+            sawDash = true;
+            continue;
+        }
+        if (character != QLatin1Char('|') && character != QLatin1Char(':')
+                && character != QLatin1Char(' ') && character != QLatin1Char('\t'))
+            return false;
+    }
+    return sawDash;
+}
+
+void MarkdownHighlighter::highlightTable(const QString &text) {
+    if (!isPipeTableLine(text))
         return;
 
-    static const QRegularExpression separatorRe(
-        QStringLiteral("^\\s*\\|?\\s*:?-+:?\\s*(?:\\|\\s*:?-+:?\\s*)+\\|?\\s*$"));
-    const bool separator = separatorRe.match(text).hasMatch();
+    const bool separator = isPipeSeparatorLine(text);
     const QTextBlock next = currentBlock().next();
-    const bool header = !separator && next.isValid() && separatorRe.match(next.text()).hasMatch();
+    const bool header = !separator && next.isValid() && isPipeSeparatorLine(next.text());
 
     int cellStart = 0;
     for (int i = 0; i <= text.length(); ++i) {

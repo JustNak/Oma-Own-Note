@@ -383,10 +383,6 @@ Popup {
         accepted = false;
     }
 
-    function scaledSize(pixels) {
-        return Math.max(1, Math.round(pixels * textScale));
-    }
-
     function refreshFilter() {
         var query = filterField.text.toLocaleLowerCase();
         var catalog = EditorMutations.catalog();

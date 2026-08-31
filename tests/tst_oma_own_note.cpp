@@ -6,8 +6,9 @@
 #include <QQmlEngine>
 #include <QQuickStyle>
 #include <QQuickWindow>
-#include <QTextCursor>
+#include <QTextBlock>
 #include <QTextDocument>
+#include <QTextLayout>
 
 #include "backend.h"
 #include "markdownhighlighter.h"
@@ -168,99 +169,11 @@ private slots:
     }
 
     void insertsMarkdownBlocksAndTables() {
-        const QString mutationsPath = QFINDTESTDATA("../src/EditorMutations.js");
-        QVERIFY(!mutationsPath.isEmpty());
+        const QString harnessPath = QFINDTESTDATA("InsertHarness.qml");
+        QVERIFY(!harnessPath.isEmpty());
 
         QQmlEngine engine;
-        QQmlComponent component(&engine);
-        const QByteArray harness = R"QML(
-            import QtQuick
-            import "EditorMutations.js" as EditorMutations
-
-            TextEdit {
-                property string headingText
-                property int headingCursor
-                property string selectedHeading
-                property string midLineHeading
-                property string tableText
-                property int tableCursor
-                property string convertedText
-                property string fenceText
-                property int fenceCursor
-                property string imageText
-                property int imageSelStart
-                property int imageSelEnd
-                property string dateText
-                property string relativeImage
-                property bool movedInTable
-                property int nextCellStart
-                property int nextCellEnd
-                property string pipeTableSample
-
-                Component.onCompleted: {
-                    text = "";
-                    cursorPosition = 0;
-                    EditorMutations.applyInsert(this, "heading1");
-                    headingText = text;
-                    headingCursor = cursorPosition;
-
-                    text = "hello";
-                    select(0, 5);
-                    EditorMutations.applyInsert(this, "heading1");
-                    selectedHeading = text;
-
-                    text = "hello";
-                    cursorPosition = 5;
-                    EditorMutations.applyInsert(this, "heading1");
-                    midLineHeading = text;
-
-                    text = "";
-                    cursorPosition = 0;
-                    EditorMutations.applyInsert(this, "table", { columns: 3, rows: 2 });
-                    tableText = text;
-                    tableCursor = cursorPosition;
-
-                    text = "a\tb\n1\t2";
-                    select(0, text.length);
-                    EditorMutations.applyInsert(this, "table");
-                    convertedText = text;
-
-                    text = "";
-                    cursorPosition = 0;
-                    EditorMutations.applyInsert(this, "fence");
-                    fenceText = text;
-                    fenceCursor = cursorPosition;
-
-                    text = "";
-                    cursorPosition = 0;
-                    EditorMutations.applyInsert(this, "image", { alt: "Cat", path: "cat.png" });
-                    imageText = text;
-                    imageSelStart = selectionStart;
-                    imageSelEnd = selectionEnd;
-
-                    text = "";
-                    cursorPosition = 0;
-                    EditorMutations.applyInsert(this, "date", { date: "2026-08-31" });
-                    dateText = text;
-
-                    relativeImage = EditorMutations.relativeImagePath(
-                        "file:///home/writer/note.md",
-                        "file:///home/writer/img/cat.png");
-                    pipeTableSample = EditorMutations.pipeTable(3, 2);
-
-                    text = EditorMutations.pipeTable(2, 2);
-                    cursorPosition = 2;
-                    movedInTable = EditorMutations.moveTableCell(this, 1);
-                    nextCellStart = selectionStart;
-                    nextCellEnd = selectionEnd;
-                    if (selectionStart === selectionEnd)
-                        nextCellStart = nextCellEnd = cursorPosition;
-                }
-            }
-        )QML";
-        const QUrl harnessUrl = QUrl::fromLocalFile(
-            QFileInfo(mutationsPath).absolutePath() + QStringLiteral("/InsertHarness.qml"));
-        component.setData(harness, harnessUrl);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(harnessPath));
         QVERIFY2(component.isReady(), qPrintable(component.errorString()));
         QScopedPointer<QObject> editor(component.create());
         QVERIFY2(editor, qPrintable(component.errorString()));
@@ -310,15 +223,17 @@ private slots:
 
         QObject *palette = window->findChild<QObject *>(QStringLiteral("insertPalette"));
         QVERIFY(palette);
-        QVERIFY(QMetaObject::invokeMethod(palette, "activateKind",
-                                          Q_ARG(QString, QStringLiteral("heading1"))));
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "applyInsertKind",
+                                          Q_ARG(QVariant, QVariant(QStringLiteral("heading1"))),
+                                          Q_ARG(QVariant, QVariantMap())));
         QTRY_COMPARE(editor->property("text").toString(), QStringLiteral("# "));
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "closeInsertPalette"));
 
         QVERIFY(QMetaObject::invokeMethod(window.data(), "openInsertPalette"));
         QTRY_COMPARE(window->property("insertPaletteOpened").toBool(), true);
         QTest::keyClick(quickWindow, Qt::Key_Escape);
         QTRY_COMPARE(window->property("insertPaletteOpened").toBool(), false);
-        QVERIFY(editor->property("activeFocus").toBool());
+        QTRY_VERIFY(editor->property("activeFocus").toBool());
     }
 
     void highlightsTablesTasksAndFences() {
@@ -334,25 +249,31 @@ private slots:
             "code\n"
             "```\n"));
         MarkdownHighlighter highlighter(&document);
+        highlighter.rehighlight();
 
-        QTextCursor cursor(&document);
-        cursor.setPosition(2);
-        QVERIFY(cursor.charFormat().fontWeight() >= QFont::Bold);
+        const auto formatAt = [&document](int position) {
+            const QTextBlock block = document.findBlock(position);
+            const int local = position - block.position();
+            QTextCharFormat format;
+            const auto ranges = block.layout()->formats();
+            for (const QTextLayout::FormatRange &range : ranges) {
+                if (local >= range.start && local < range.start + range.length)
+                    format = range.format;
+            }
+            return format;
+        };
 
-        cursor.setPosition(0);
-        QCOMPARE(cursor.charFormat().foreground().color(),
-                 QColor(QStringLiteral("#4f525a")));
+        QVERIFY(formatAt(2).fontWeight() >= QFont::Bold);
+        QCOMPARE(formatAt(0).foreground().color(), QColor(QStringLiteral("#4f525a")));
 
         const int taskBox = document.toPlainText().indexOf(QStringLiteral("[ ]"));
         QVERIFY(taskBox >= 0);
-        cursor.setPosition(taskBox);
-        QCOMPARE(cursor.charFormat().foreground().color(),
+        QCOMPARE(formatAt(taskBox).foreground().color(),
                  QColor(QStringLiteral("#4f525a")));
 
         const int codePos = document.toPlainText().indexOf(QStringLiteral("code"));
         QVERIFY(codePos >= 0);
-        cursor.setPosition(codePos);
-        QVERIFY(cursor.charFormat().background().style() != Qt::NoBrush);
+        QVERIFY(formatAt(codePos).background().style() != Qt::NoBrush);
     }
 
     void tabMovesBetweenTableCells() {

@@ -405,7 +405,7 @@ ApplicationWindow {
         onTriggered: function(kind, options) {
             win.applyInsertKind(kind, options);
         }
-        onCancelled: editor.forceActiveFocus()
+        onCancelled: Qt.callLater(function() { editor.forceActiveFocus(); })
     }
 
     Dialogs.FileDialog {
