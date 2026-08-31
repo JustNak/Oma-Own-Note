@@ -108,9 +108,9 @@ void MarkdownHighlighter::rebuildFormats() {
     m_tableHeaderFormat.setFontWeight(QFont::Bold);
 
     // Pipes and the separator stay full-width so columns keep their grid.
-    // They are painted in the paper color; TableChrome draws the box.
+    // Transparent ink lets TableChrome's theme-colored rules show through.
     m_tableHiddenSyntaxFormat = QTextCharFormat();
-    m_tableHiddenSyntaxFormat.setForeground(background);
+    m_tableHiddenSyntaxFormat.setForeground(Qt::transparent);
 }
 
 void MarkdownHighlighter::highlightBlock(const QString &text) {
