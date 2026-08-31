@@ -71,6 +71,59 @@ function catalog() {
     ];
 }
 
+function catalogShortTitle(item) {
+    switch (item.kind) {
+    case "heading1":
+        return "H1";
+    case "heading2":
+        return "H2";
+    case "heading3":
+        return "H3";
+    case "bullet":
+        return "Bullets";
+    case "numbered":
+        return "Numbers";
+    case "task":
+        return "Tasks";
+    case "inlineCode":
+        return "Inline";
+    case "fence":
+        return "Block";
+    case "date":
+        return "Today";
+    default:
+        return item.title;
+    }
+}
+
+function categories() {
+    var items = catalog();
+    var order = [];
+    var grouped = {};
+    for (var i = 0; i < items.length; i++) {
+        var item = items[i];
+        if (!grouped[item.section]) {
+            grouped[item.section] = {
+                kind: "category",
+                section: item.section,
+                title: item.section,
+                icon: item.icon,
+                firstKind: item.kind,
+                members: []
+            };
+            order.push(item.section);
+        }
+        grouped[item.section].members.push(catalogShortTitle(item));
+    }
+    var result = [];
+    for (var s = 0; s < order.length; s++) {
+        var category = grouped[order[s]];
+        category.preview = category.members.join(" · ");
+        result.push(category);
+    }
+    return result;
+}
+
 function headingPrefix(level) {
     var hashes = "";
     var count = Math.max(1, Math.min(6, level));
@@ -124,16 +177,64 @@ function emptyCells(count) {
     return cells;
 }
 
+function padCell(text, width) {
+    var out = String(text);
+    while (out.length < width)
+        out += " ";
+    return out;
+}
+
+function columnWidths(rows) {
+    var columns = 0;
+    for (var r = 0; r < rows.length; r++)
+        columns = Math.max(columns, rows[r].length);
+    var widths = [];
+    for (var c = 0; c < columns; c++) {
+        var width = 3;
+        for (var row = 0; row < rows.length; row++) {
+            var cell = c < rows[row].length ? String(rows[row][c]) : "";
+            if (cell.length > width)
+                width = cell.length;
+        }
+        widths.push(width);
+    }
+    return widths;
+}
+
+function prettyPipeRow(cells, widths) {
+    var padded = [];
+    for (var i = 0; i < widths.length; i++)
+        padded.push(padCell(i < cells.length ? cells[i] : "", widths[i]));
+    return pipeRow(padded);
+}
+
+function prettySeparatorRow(widths) {
+    var cells = [];
+    for (var i = 0; i < widths.length; i++) {
+        var dashes = "---";
+        while (dashes.length < widths[i])
+            dashes += "-";
+        cells.push(dashes);
+    }
+    return pipeRow(cells);
+}
+
+function prettyTableFromCells(rows) {
+    var data = rows.length > 0 ? rows : [emptyCells(1)];
+    var widths = columnWidths(data);
+    var lines = [prettyPipeRow(data[0], widths), prettySeparatorRow(widths)];
+    for (var r = 1; r < data.length; r++)
+        lines.push(prettyPipeRow(data[r], widths));
+    return lines.join("\n");
+}
+
 function pipeTable(columns, rows) {
     var cols = Math.max(1, columns);
     var totalRows = Math.max(1, rows);
-    var separator = [];
-    for (var i = 0; i < cols; i++)
-        separator.push("---");
-    var lines = [pipeRow(emptyCells(cols)), pipeRow(separator)];
-    for (var r = 1; r < totalRows; r++)
-        lines.push(pipeRow(emptyCells(cols)));
-    return lines.join("\n");
+    var data = [];
+    for (var r = 0; r < totalRows; r++)
+        data.push(emptyCells(cols));
+    return prettyTableFromCells(data);
 }
 
 function splitCsvLine(line) {
@@ -182,13 +283,7 @@ function tableFromSelection(selected) {
             rows[r].push("");
     }
 
-    var separator = [];
-    for (var c = 0; c < columns; c++)
-        separator.push("---");
-    var out = [pipeRow(rows[0]), pipeRow(separator)];
-    for (var body = 1; body < rows.length; body++)
-        out.push(pipeRow(rows[body]));
-    return out.join("\n");
+    return prettyTableFromCells(rows);
 }
 
 function escapeMarkdownLinkText(linkText) {
@@ -303,7 +398,7 @@ function previewMarkdown(kind, options) {
     case "fence":
         return "```\n\n```";
     case "table":
-        return pipeTable(options.columns || 3, options.rows || 3).split("\n").slice(0, 2).join("\n");
+        return (options.columns || 3) + " × " + (options.rows || 3);
     case "image":
         return "![alt](path)";
     case "link":
@@ -622,6 +717,101 @@ function tableCellRef(lineStart, line, cell, cellIndex) {
     };
 }
 
+function tableExtent(text, position) {
+    var bounds = lineBounds(text, position);
+    if (!isTableRow(bounds.line) && !isSeparatorRow(bounds.line))
+        return null;
+    var start = bounds.start;
+    var end = bounds.end;
+    while (start > 0) {
+        var previous = lineBounds(text, start - 1);
+        if (!isTableRow(previous.line) && !isSeparatorRow(previous.line))
+            break;
+        start = previous.start;
+    }
+    while (end < text.length) {
+        var next = lineBounds(text, end + 1);
+        if (!isTableRow(next.line) && !isSeparatorRow(next.line))
+            break;
+        end = next.end;
+    }
+    return { start: start, end: end };
+}
+
+function prettyPrintTableText(block) {
+    var lines = String(block).split("\n");
+    var rows = [];
+    for (var i = 0; i < lines.length; i++) {
+        if (isSeparatorRow(lines[i]) || !isTableRow(lines[i]))
+            continue;
+        var cells = splitTableLine(lines[i]);
+        if (cells.length === 0)
+            cells = [""];
+        rows.push(cells);
+    }
+    if (rows.length === 0)
+        return block;
+    return prettyTableFromCells(rows);
+}
+
+function dataRowIndexAt(text, tableStart, lineStart) {
+    var rowIndex = 0;
+    var walk = tableStart;
+    while (walk < lineStart) {
+        var line = lineBounds(text, walk);
+        if (isTableRow(line.line) && !isSeparatorRow(line.line))
+            rowIndex++;
+        walk = line.end + 1;
+    }
+    return rowIndex;
+}
+
+function placeCaretInTable(editor, tableStart, formatted, rowIndex, cellIndex) {
+    var offset = tableStart;
+    var dataRow = 0;
+    var lines = formatted.split("\n");
+    for (var i = 0; i < lines.length; i++) {
+        if (isTableRow(lines[i]) && !isSeparatorRow(lines[i])) {
+            if (dataRow === rowIndex) {
+                var parsed = parseTableRow(lines[i]);
+                if (!parsed || parsed.cells.length === 0)
+                    return;
+                var index = Math.max(0, Math.min(cellIndex, parsed.cells.length - 1));
+                var content = cellContent(lines[i], parsed.cells[index]);
+                var caretStart = offset + content.start;
+                var caretEnd = offset + content.end;
+                if (caretStart === caretEnd)
+                    editor.cursorPosition = caretStart;
+                else
+                    editor.select(caretStart, caretEnd);
+                return;
+            }
+            dataRow++;
+        }
+        offset += lines[i].length + 1;
+    }
+}
+
+function alignTable(editor) {
+    var text = editor.text;
+    var position = editor.cursorPosition;
+    var extent = tableExtent(text, position);
+    if (!extent)
+        return false;
+    var info = tableCellAt(text, position);
+    if (!info && isSeparatorRow(lineBounds(text, position).line))
+        return false;
+    if (!info)
+        return false;
+    var formatted = prettyPrintTableText(text.slice(extent.start, extent.end));
+    if (formatted === text.slice(extent.start, extent.end))
+        return false;
+    var rowIndex = dataRowIndexAt(text, extent.start, info.lineStart);
+    replaceRange(editor, extent.start, extent.end, formatted);
+    placeCaretInTable(editor, extent.start, formatted, rowIndex, info.cellIndex);
+    return true;
+}
+
 function walkTableRow(text, fromPosition, direction) {
     var position = fromPosition;
     while (position >= 0 && position <= text.length) {
@@ -644,6 +834,7 @@ function walkTableRow(text, fromPosition, direction) {
 }
 
 function moveTableCell(editor, direction) {
+    alignTable(editor);
     var text = editor.text;
     var position = editor.cursorPosition;
     var info = tableCellAt(text, position);

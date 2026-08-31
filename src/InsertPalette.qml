@@ -21,8 +21,11 @@ Popup {
     readonly property color paperColor: darkMode ? "#22221f" : "#fffef2"
     readonly property color hairlineColor: darkMode ? "#4f525a" : "#d5d56e"
     readonly property color shadowColor: darkMode ? "#00000066" : "#0000001a"
+    readonly property color wellColor: darkMode ? "#2c2c28" : "#f4f4e4"
 
-    property string mode: "list"
+    property string mode: "root"
+    property string activeSection: ""
+    property string tableReturnMode: "root"
     property int selectedIndex: 0
     property int tableColumns: 3
     property int tableRows: 3
@@ -30,35 +33,44 @@ Popup {
     property var rows: []
     property bool accepted: false
 
+    readonly property bool showingList: mode === "root" || mode === "category" || mode === "search"
+    readonly property int choiceCount: visibleItems.length
     readonly property int paletteWidth: Math.max(1, Math.round(320 * textScale))
     readonly property int rowHeight: Math.max(1, Math.round(36 * textScale))
-    readonly property int sectionHeight: Math.max(1, Math.round(22 * textScale))
+    readonly property int categoryHeight: Math.max(1, Math.round(52 * textScale))
     readonly property int filterHeight: Math.max(1, Math.round(44 * textScale))
     readonly property int previewHeight: Math.max(1, Math.round(48 * textScale))
-    readonly property int cellSize: Math.max(1, Math.round(18 * textScale))
-    readonly property int cellGap: Math.max(1, Math.round(3 * textScale))
-    readonly property int maxListHeight: Math.max(rowHeight * 4,
+    readonly property int cellSize: Math.max(1, Math.round(22 * textScale))
+    readonly property int cellGap: Math.max(1, Math.round(4 * textScale))
+    readonly property int iconWell: Math.max(1, Math.round(28 * textScale))
+    readonly property int maxListHeight: Math.max(categoryHeight * 5,
         Math.round(containerHeight * 0.56) - filterHeight - previewHeight - 16)
 
     readonly property string previewText: {
         if (mode === "table")
-            return EditorMutations.previewMarkdown("table", {
-                columns: tableColumns,
-                rows: tableRows
-            });
+            return tableColumns + " × " + tableRows;
         if (selectedIndex < 0 || selectedIndex >= visibleItems.length)
             return "";
-        return EditorMutations.previewMarkdown(visibleItems[selectedIndex].kind);
+        var choice = visibleItems[selectedIndex];
+        if (choice.kind === "category")
+            return EditorMutations.previewMarkdown(choice.firstKind);
+        return EditorMutations.previewMarkdown(choice.kind);
     }
 
     signal triggered(string kind, var options)
     signal cancelled()
 
+    Shortcut {
+        sequence: "Escape"
+        enabled: root.opened
+        onActivated: root.handleEscape()
+    }
+
     modal: false
     focus: true
     padding: 0
     width: paletteWidth
-    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+    closePolicy: Popup.CloseOnPressOutside
     opacity: 1
 
     enter: Transition {
@@ -113,7 +125,8 @@ Popup {
                 anchors.leftMargin: 16
                 anchors.rightMargin: 16
                 verticalAlignment: TextInput.AlignVCenter
-                visible: root.mode === "list"
+                visible: root.showingList
+                opacity: root.mode === "category" && text.length === 0 ? 0 : 1
                 selectByMouse: true
                 color: root.strongTextColor
                 font.family: "iA Writer Mono S"
@@ -131,10 +144,30 @@ Popup {
                 anchors.left: parent.left
                 anchors.leftMargin: 16
                 text: "Insert"
-                visible: root.mode === "list" && filterField.text.length === 0
+                visible: root.mode === "root" && filterField.text.length === 0
                 color: root.mutedColor
                 font.family: "iA Writer Mono S"
                 font.pixelSize: Math.round(15 * root.textScale)
+            }
+
+            MouseArea {
+                id: backHeader
+                objectName: "insertPaletteBack"
+                anchors.fill: parent
+                visible: root.mode === "category" && filterField.text.length === 0
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.leaveCategory()
+
+                Label {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.left: parent.left
+                    anchors.leftMargin: 16
+                    text: "← " + root.activeSection
+                    color: root.strongTextColor
+                    font.family: "iA Writer Mono S"
+                    font.pixelSize: Math.round(15 * root.textScale)
+                }
             }
 
             Label {
@@ -159,15 +192,16 @@ Popup {
         Item {
             width: parent.width
             height: root.mode === "table" ? tablePane.implicitHeight : listPane.height
+            clip: true
 
             ListView {
                 id: listPane
                 objectName: "insertPaletteList"
-                anchors.left: parent.left
-                anchors.right: parent.right
+                x: root.listSlide
+                width: parent.width
                 height: Math.min(contentHeight, root.maxListHeight)
-                visible: root.mode === "list"
-                opacity: root.mode === "list" ? 1 : 0
+                visible: root.showingList
+                opacity: root.showingList ? 1 : 0
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
                 model: root.rows
@@ -176,33 +210,23 @@ Popup {
                 Behavior on opacity {
                     NumberAnimation { duration: 90; easing.type: Easing.OutCubic }
                 }
+                Behavior on x {
+                    NumberAnimation { duration: 90; easing.type: Easing.OutCubic }
+                }
 
                 delegate: Item {
                     required property var modelData
                     width: ListView.view.width
-                    height: modelData.rowType === "section" ? root.sectionHeight : root.rowHeight
-
-                    Label {
-                        anchors.left: parent.left
-                        anchors.leftMargin: 16
-                        anchors.bottom: parent.bottom
-                        anchors.bottomMargin: 2
-                        visible: modelData.rowType === "section"
-                        text: modelData.title
-                        color: root.mutedColor
-                        font.family: "iA Writer Mono S"
-                        font.pixelSize: Math.round(11 * root.textScale)
-                        font.letterSpacing: 0.8
-                    }
+                    height: modelData.rowType === "category" ? root.categoryHeight : root.rowHeight
 
                     Rectangle {
                         anchors.fill: parent
                         anchors.leftMargin: 8
                         anchors.rightMargin: 8
-                        anchors.topMargin: 2
-                        anchors.bottomMargin: 2
-                        visible: modelData.rowType === "item"
-                        radius: 2
+                        anchors.topMargin: 3
+                        anchors.bottomMargin: 3
+                        visible: modelData.rowType === "category" || modelData.rowType === "item"
+                        radius: 6
                         color: modelData.itemIndex === root.selectedIndex
                                ? root.selectionFill : "transparent"
 
@@ -212,31 +236,65 @@ Popup {
                             anchors.rightMargin: 10
                             spacing: 10
 
-                            InsertIcon {
+                            Item {
+                                width: root.iconWell
+                                height: root.iconWell
                                 anchors.verticalCenter: parent.verticalCenter
-                                iconName: modelData.icon || ""
-                                iconColor: modelData.itemIndex === root.selectedIndex
-                                           ? root.strongTextColor : root.mutedColor
+
+                                Rectangle {
+                                    anchors.fill: parent
+                                    visible: modelData.rowType === "category"
+                                    radius: 6
+                                    color: root.wellColor
+                                    border.width: 1
+                                    border.color: root.hairlineColor
+                                    opacity: 0.85
+                                }
+
+                                InsertIcon {
+                                    anchors.centerIn: parent
+                                    iconName: modelData.icon || ""
+                                    iconColor: modelData.itemIndex === root.selectedIndex
+                                               ? root.strongTextColor : root.mutedColor
+                                }
                             }
 
-                            Label {
+                            Column {
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: parent.width - 26 - shortcutLabel.width - 20
-                                text: modelData.title || ""
-                                color: modelData.itemIndex === root.selectedIndex
-                                       ? root.strongTextColor : root.textColor
-                                elide: Text.ElideRight
-                                font.family: "iA Writer Mono S"
-                                font.pixelSize: Math.round(13 * root.textScale)
+                                width: parent.width - root.iconWell - shortcutLabel.width - 36
+                                spacing: 1
+
+                                Label {
+                                    width: parent.width
+                                    text: modelData.title || ""
+                                    color: modelData.itemIndex === root.selectedIndex
+                                           ? root.strongTextColor : root.textColor
+                                    elide: Text.ElideRight
+                                    font.family: "iA Writer Mono S"
+                                    font.pixelSize: Math.round(13 * root.textScale)
+                                }
+
+                                Label {
+                                    width: parent.width
+                                    visible: modelData.rowType === "category"
+                                    text: modelData.preview || ""
+                                    color: root.mutedColor
+                                    elide: Text.ElideRight
+                                    font.family: "iA Writer Mono S"
+                                    font.pixelSize: Math.round(11 * root.textScale)
+                                }
                             }
 
                             Label {
                                 id: shortcutLabel
                                 anchors.verticalCenter: parent.verticalCenter
-                                text: modelData.shortcut || ""
+                                text: modelData.rowType === "category"
+                                      ? "›"
+                                      : (modelData.shortcut || "")
                                 color: root.mutedColor
                                 font.family: "iA Writer Mono S"
-                                font.pixelSize: Math.round(11 * root.textScale)
+                                font.pixelSize: Math.round(modelData.rowType === "category"
+                                                           ? 16 : 11) * root.textScale
                             }
                         }
 
@@ -255,7 +313,7 @@ Popup {
                 anchors.leftMargin: 16
                 anchors.top: parent.top
                 anchors.topMargin: 12
-                visible: root.mode === "list" && root.visibleItems.length === 0
+                visible: root.mode === "search" && root.visibleItems.length === 0
                 text: "Nothing matches"
                 color: root.mutedColor
                 font.family: "iA Writer Mono S"
@@ -280,6 +338,7 @@ Popup {
 
                 Grid {
                     id: tableGrid
+                    objectName: "insertPaletteTableGrid"
                     columns: 8
                     rows: 6
                     spacing: root.cellGap
@@ -293,17 +352,18 @@ Popup {
                             readonly property int cellRow: Math.floor(index / 8) + 1
                             readonly property bool chosen: cellColumn <= root.tableColumns
                                                            && cellRow <= root.tableRows
+                            readonly property bool headerRow: chosen && cellRow === 1
                             width: root.cellSize
                             height: root.cellSize
-                            radius: 1
-                            color: chosen ? Qt.rgba(root.accentColor.r, root.accentColor.g,
-                                                    root.accentColor.b, 0.28)
-                                          : "transparent"
-                            border.width: chosen
-                                          && (cellColumn === root.tableColumns
-                                              || cellRow === root.tableRows
-                                              || cellColumn === 1 || cellRow === 1)
-                                          ? 1 : 1
+                            radius: 3
+                            color: headerRow
+                                   ? Qt.rgba(root.accentColor.r, root.accentColor.g,
+                                             root.accentColor.b, 0.42)
+                                   : chosen
+                                     ? Qt.rgba(root.accentColor.r, root.accentColor.g,
+                                               root.accentColor.b, 0.28)
+                                     : "transparent"
+                            border.width: 1
                             border.color: chosen ? root.accentColor : root.hairlineColor
 
                             MouseArea {
@@ -321,13 +381,6 @@ Popup {
                     Keys.onPressed: function(event) {
                         root.handleTableKeys(event);
                     }
-                }
-
-                Label {
-                    text: root.tableColumns + " columns × " + root.tableRows + " rows"
-                    color: root.strongTextColor
-                    font.family: "iA Writer Mono S"
-                    font.pixelSize: Math.round(12 * root.textScale)
                 }
 
                 Label {
@@ -367,9 +420,11 @@ Popup {
         }
     }
 
+    property int listSlide: 0
+
     onOpened: {
         accepted = false;
-        if (mode === "list")
+        if (showingList)
             filterField.forceActiveFocus();
         else
             tableGrid.forceActiveFocus();
@@ -377,59 +432,95 @@ Popup {
     }
 
     onClosed: {
-        mode = "list";
+        mode = "root";
+        activeSection = "";
+        tableReturnMode = "root";
         if (!accepted)
             cancelled();
         accepted = false;
     }
 
+    function playSlide(from) {
+        listSlide = from;
+        Qt.callLater(function() { listSlide = 0; });
+    }
+
     function refreshFilter() {
+        if (mode === "table")
+            return;
+
         var query = filterField.text.toLocaleLowerCase();
-        var catalog = EditorMutations.catalog();
-        var items = [];
-        for (var i = 0; i < catalog.length; i++) {
-            var item = catalog[i];
-            if (query.length > 0) {
+        if (query.length > 0) {
+            if (mode !== "search")
+                mode = "search";
+            var catalog = EditorMutations.catalog();
+            var items = [];
+            for (var i = 0; i < catalog.length; i++) {
+                var item = catalog[i];
                 var hay = (item.title + " " + item.aliases + " " + item.kind).toLocaleLowerCase();
-                if (hay.indexOf(query) < 0)
-                    continue;
+                if (hay.indexOf(query) >= 0)
+                    items.push(item);
             }
-            items.push(item);
+            visibleItems = items;
+            rows = buildItemRows(items);
+        } else if (mode === "search" || mode === "root") {
+            mode = "root";
+            activeSection = "";
+            var cats = EditorMutations.categories();
+            visibleItems = cats;
+            rows = buildCategoryRows(cats);
+        } else {
+            var sectionItems = [];
+            var all = EditorMutations.catalog();
+            for (var s = 0; s < all.length; s++) {
+                if (all[s].section === activeSection)
+                    sectionItems.push(all[s]);
+            }
+            visibleItems = sectionItems;
+            rows = buildItemRows(sectionItems);
         }
-        visibleItems = items;
-        rows = buildRows(items);
-        if (selectedIndex >= items.length)
-            selectedIndex = Math.max(0, items.length - 1);
-        if (items.length > 0 && selectedIndex < 0)
+
+        if (selectedIndex >= visibleItems.length)
+            selectedIndex = Math.max(0, visibleItems.length - 1);
+        if (visibleItems.length > 0 && selectedIndex < 0)
             selectedIndex = 0;
         positionSelected();
     }
 
-    function buildRows(items) {
+    function buildCategoryRows(categories) {
         var next = [];
-        var lastSection = "";
+        for (var i = 0; i < categories.length; i++) {
+            next.push({
+                rowType: "category",
+                title: categories[i].title,
+                preview: categories[i].preview,
+                kind: "category",
+                icon: categories[i].icon,
+                shortcut: "",
+                itemIndex: i
+            });
+        }
+        return next;
+    }
+
+    function buildItemRows(items) {
+        var next = [];
         for (var i = 0; i < items.length; i++) {
-            if (items[i].section !== lastSection) {
-                lastSection = items[i].section;
-                next.push({
-                    rowType: "section",
-                    title: lastSection,
-                    itemIndex: -1,
-                    icon: "",
-                    shortcut: ""
-                });
-            }
             next.push({
                 rowType: "item",
                 title: items[i].title,
                 kind: items[i].kind,
                 shortcut: items[i].shortcut,
                 icon: items[i].icon,
+                preview: "",
                 itemIndex: i
             });
         }
         if (items.length === 0)
-            next.push({ rowType: "empty", title: "", itemIndex: -1, icon: "", shortcut: "" });
+            next.push({
+                rowType: "empty", title: "", itemIndex: -1,
+                icon: "", shortcut: "", preview: ""
+            });
         return next;
     }
 
@@ -454,7 +545,26 @@ Popup {
         positionSelected();
     }
 
+    function enterCategory(section) {
+        mode = "category";
+        activeSection = section;
+        selectedIndex = 0;
+        playSlide(8);
+        refreshFilter();
+        filterField.forceActiveFocus();
+    }
+
+    function leaveCategory() {
+        mode = "root";
+        activeSection = "";
+        selectedIndex = 0;
+        playSlide(-8);
+        refreshFilter();
+        filterField.forceActiveFocus();
+    }
+
     function enterTableMode() {
+        tableReturnMode = mode === "table" ? "root" : mode;
         mode = "table";
         tableColumns = 3;
         tableRows = 3;
@@ -462,8 +572,15 @@ Popup {
     }
 
     function leaveTableMode() {
-        mode = "list";
-        filterField.forceActiveFocus();
+        var back = tableReturnMode || "root";
+        mode = back;
+        if (mode === "search" && filterField.text.length === 0)
+            mode = "root";
+        if (mode === "category" && activeSection.length === 0)
+            mode = "root";
+        refreshFilter();
+        if (showingList)
+            filterField.forceActiveFocus();
     }
 
     function commit(kind, options) {
@@ -480,6 +597,10 @@ Popup {
         if (index < 0 || index >= visibleItems.length)
             return;
         var item = visibleItems[index];
+        if (mode === "root" || item.kind === "category") {
+            enterCategory(item.section);
+            return;
+        }
         if (item.kind === "table") {
             enterTableMode();
             return;
@@ -506,6 +627,11 @@ Popup {
         activateIndex(selectedIndex);
     }
 
+    function selectedIsTable() {
+        return selectedIndex >= 0 && selectedIndex < visibleItems.length
+            && visibleItems[selectedIndex].kind === "table";
+    }
+
     function handleListKeys(event) {
         var controlHeld = event.modifiers & Qt.ControlModifier;
         if (event.key === Qt.Key_Down || (controlHeld && event.key === Qt.Key_N)) {
@@ -514,18 +640,38 @@ Popup {
         } else if (event.key === Qt.Key_Up || (controlHeld && event.key === Qt.Key_P)) {
             moveSelection(-1);
             event.accepted = true;
-        } else if (event.key === Qt.Key_Right
-                   && selectedIndex >= 0 && selectedIndex < visibleItems.length
-                   && visibleItems[selectedIndex].kind === "table") {
-            enterTableMode();
-            event.accepted = true;
+        } else if (event.key === Qt.Key_Right) {
+            if (mode === "root") {
+                activateSelected();
+                event.accepted = true;
+            } else if (selectedIsTable()) {
+                enterTableMode();
+                event.accepted = true;
+            }
+        } else if (event.key === Qt.Key_Left) {
+            if (mode === "category") {
+                leaveCategory();
+                event.accepted = true;
+            } else if (mode === "search") {
+                filterField.text = "";
+                event.accepted = true;
+            }
         } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
             activateSelected();
             event.accepted = true;
-        } else if (event.key === Qt.Key_Escape) {
+        }
+    }
+
+    function handleEscape() {
+        if (mode === "table")
+            leaveTableMode();
+        else if (mode === "category")
+            leaveCategory();
+        else if (mode === "search")
+            filterField.text = "";
+        else {
             accepted = false;
             close();
-            event.accepted = true;
         }
     }
 
@@ -545,18 +691,18 @@ Popup {
         } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
             commitTable();
             event.accepted = true;
-        } else if (event.key === Qt.Key_Escape) {
-            leaveTableMode();
-            event.accepted = true;
         }
     }
 
     function openAt(caretX, caretTop, caretBottom) {
-        mode = "list";
+        mode = "root";
+        activeSection = "";
+        tableReturnMode = "root";
         filterField.text = "";
         selectedIndex = 0;
         tableColumns = 3;
         tableRows = 3;
+        listSlide = 0;
         refreshFilter();
 
         var paletteHeight = filterHeight + previewHeight + 2
@@ -580,7 +726,7 @@ Popup {
     function listContentHeight() {
         var height = 0;
         for (var i = 0; i < rows.length; i++)
-            height += rows[i].rowType === "section" ? sectionHeight : rowHeight;
+            height += rows[i].rowType === "category" ? categoryHeight : rowHeight;
         if (visibleItems.length === 0)
             height = rowHeight;
         return height;

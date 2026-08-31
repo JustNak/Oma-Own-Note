@@ -183,12 +183,12 @@ private slots:
         QCOMPARE(editor->property("selectedHeading").toString(), QStringLiteral("# hello"));
         QCOMPARE(editor->property("midLineHeading").toString(), QStringLiteral("hello\n\n# "));
         QCOMPARE(editor->property("pipeTableSample").toString(),
-                 QStringLiteral("|  |  |  |\n| --- | --- | --- |\n|  |  |  |"));
+                 QStringLiteral("|     |     |     |\n| --- | --- | --- |\n|     |     |     |"));
         QCOMPARE(editor->property("tableText").toString(),
-                 QStringLiteral("|  |  |  |\n| --- | --- | --- |\n|  |  |  |"));
+                 QStringLiteral("|     |     |     |\n| --- | --- | --- |\n|     |     |     |"));
         QCOMPARE(editor->property("tableCursor").toInt(), 2);
         QCOMPARE(editor->property("convertedText").toString(),
-                 QStringLiteral("| a | b |\n| --- | --- |\n| 1 | 2 |"));
+                 QStringLiteral("| a   | b   |\n| --- | --- |\n| 1   | 2   |"));
         QCOMPARE(editor->property("fenceText").toString(), QStringLiteral("```\n\n```"));
         QCOMPARE(editor->property("fenceCursor").toInt(), 3);
         QCOMPARE(editor->property("imageText").toString(), QStringLiteral("![Cat](cat.png)"));
@@ -197,7 +197,7 @@ private slots:
         QCOMPARE(editor->property("dateText").toString(), QStringLiteral("2026-08-31"));
         QCOMPARE(editor->property("relativeImage").toString(), QStringLiteral("img/cat.png"));
         QVERIFY(editor->property("movedInTable").toBool());
-        QCOMPARE(editor->property("nextCellStart").toInt(), 6);
+        QCOMPARE(editor->property("nextCellStart").toInt(), 12);
         QCOMPARE(editor->property("dividerText").toString(), QStringLiteral("---\n"));
         QCOMPARE(editor->property("dividerCursor").toInt(), 4);
         QCOMPARE(editor->property("dividerMidText").toString(),
@@ -206,7 +206,7 @@ private slots:
         QCOMPARE(editor->property("escapedImage").toString(),
                  QStringLiteral("![Cat \\[1\\]](<photo (2).png>)"));
         QVERIFY(editor->property("oneColumnMoved").toBool());
-        QCOMPARE(editor->property("oneColumnCursor").toInt(), 16);
+        QCOMPARE(editor->property("oneColumnCursor").toInt(), 22);
     }
 
     void insertPaletteOpensOnCtrlTab() {
@@ -240,9 +240,60 @@ private slots:
 
         QVERIFY(QMetaObject::invokeMethod(window.data(), "openInsertPalette"));
         QTRY_COMPARE(window->property("insertPaletteOpened").toBool(), true);
+        QCOMPARE(palette->property("mode").toString(), QStringLiteral("root"));
+        QCOMPARE(palette->property("choiceCount").toInt(), 5);
         QTest::keyClick(quickWindow, Qt::Key_Escape);
         QTRY_COMPARE(window->property("insertPaletteOpened").toBool(), false);
         QTRY_VERIFY(editor->property("activeFocus").toBool());
+    }
+
+    void insertPaletteDrillsIntoCategories() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "openInsertPalette"));
+        QTRY_COMPARE(window->property("insertPaletteOpened").toBool(), true);
+
+        QObject *palette = window->findChild<QObject *>(QStringLiteral("insertPalette"));
+        QObject *filter = window->findChild<QObject *>(QStringLiteral("insertPaletteFilter"));
+        QVERIFY(palette);
+        QVERIFY(filter);
+        QCOMPARE(palette->property("mode").toString(), QStringLiteral("root"));
+        QCOMPARE(palette->property("choiceCount").toInt(), 5);
+
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
+        QVERIFY(quickWindow);
+        QTest::keyClick(quickWindow, Qt::Key_Return);
+        QTRY_COMPARE(palette->property("mode").toString(), QStringLiteral("category"));
+        QCOMPARE(palette->property("activeSection").toString(), QStringLiteral("Structure"));
+        QCOMPARE(palette->property("choiceCount").toInt(), 5);
+
+        QTest::keyClick(quickWindow, Qt::Key_Escape);
+        QTRY_COMPARE(palette->property("mode").toString(), QStringLiteral("root"));
+
+        filter->setProperty("text", QStringLiteral("table"));
+        QTRY_COMPARE(palette->property("mode").toString(), QStringLiteral("search"));
+        QCOMPARE(palette->property("choiceCount").toInt(), 1);
+        QCOMPARE(palette->property("previewText").toString(), QStringLiteral("3 × 3"));
+
+        QTest::keyClick(quickWindow, Qt::Key_Return);
+        QTRY_COMPARE(palette->property("mode").toString(), QStringLiteral("table"));
+        QCOMPARE(palette->property("previewText").toString(), QStringLiteral("3 × 3"));
+
+        QTest::keyClick(quickWindow, Qt::Key_Escape);
+        QTRY_COMPARE(palette->property("mode").toString(), QStringLiteral("search"));
+
+        QTest::keyClick(quickWindow, Qt::Key_Escape);
+        QTRY_COMPARE(palette->property("mode").toString(), QStringLiteral("root"));
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "closeInsertPalette"));
     }
 
     void highlightsTablesTasksAndFences() {
@@ -273,7 +324,7 @@ private slots:
         };
 
         QVERIFY(formatAt(2).fontWeight() >= QFont::Bold);
-        QCOMPARE(formatAt(0).foreground().color(), QColor(QStringLiteral("#4f525a")));
+        QCOMPARE(formatAt(0).fontPointSize(), 1.0);
 
         const int taskBox = document.toPlainText().indexOf(QStringLiteral("[ ]"));
         QVERIFY(taskBox >= 0);
@@ -306,7 +357,9 @@ private slots:
         auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
         QVERIFY(quickWindow);
         QTest::keyClick(quickWindow, Qt::Key_Tab);
-        QCOMPARE(editor->property("cursorPosition").toInt(), 6);
+        QCOMPARE(editor->property("text").toString(),
+                 QStringLiteral("|     |     |\n| --- | --- |\n|     |     |"));
+        QCOMPARE(editor->property("cursorPosition").toInt(), 12);
     }
 
     void savesAndOpensFromFooterButtons() {

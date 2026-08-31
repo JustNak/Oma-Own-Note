@@ -824,24 +824,38 @@ ApplicationWindow {
 
                 function skipHiddenForward(position) {
                     var pos = position;
-                    var ranges = backend.hiddenRangesAt(pos);
-                    for (var i = 0; i < ranges.length; i++) {
-                        if (pos >= ranges[i].start && pos < ranges[i].end) {
-                            pos = ranges[i].end;
-                            i = -1;
+                    var guard = 0;
+                    while (guard++ < 8) {
+                        var ranges = backend.hiddenRangesAt(pos);
+                        var moved = false;
+                        for (var i = 0; i < ranges.length; i++) {
+                            if (pos >= ranges[i].start && pos < ranges[i].end) {
+                                pos = ranges[i].end;
+                                moved = true;
+                                break;
+                            }
                         }
+                        if (!moved)
+                            return pos;
                     }
                     return pos;
                 }
 
                 function skipHiddenBackward(position) {
                     var pos = position;
-                    var ranges = backend.hiddenRangesAt(pos);
-                    for (var i = ranges.length - 1; i >= 0; i--) {
-                        if (pos > ranges[i].start && pos <= ranges[i].end) {
-                            pos = ranges[i].start;
-                            i = ranges.length;
+                    var guard = 0;
+                    while (guard++ < 8) {
+                        var ranges = backend.hiddenRangesAt(pos);
+                        var moved = false;
+                        for (var i = ranges.length - 1; i >= 0; i--) {
+                            if (pos > ranges[i].start && pos <= ranges[i].end) {
+                                pos = ranges[i].start;
+                                moved = true;
+                                break;
+                            }
                         }
+                        if (!moved)
+                            return pos;
                     }
                     return pos;
                 }
@@ -858,6 +872,19 @@ ApplicationWindow {
                     cursorPosition = direction > 0
                         ? skipHiddenForward(pos)
                         : skipHiddenBackward(pos);
+                }
+
+                function moveCursorVertically(direction, extendSelection) {
+                    var rect = cursorRectangle;
+                    var step = Math.max(rect.height, 1);
+                    var target = positionAt(rect.x, rect.y + rect.height / 2 + direction * step);
+                    target = direction > 0
+                        ? skipHiddenForward(target)
+                        : skipHiddenBackward(target);
+                    if (extendSelection)
+                        moveCursorSelection(target, TextEdit.SelectCharacters);
+                    else
+                        cursorPosition = target;
                 }
 
                 function movePage(direction, extendSelection) {
@@ -916,6 +943,11 @@ ApplicationWindow {
                     } else if (!commandModifier && !(event.modifiers & Qt.ShiftModifier)
                                && event.key === Qt.Key_Left) {
                         moveCursorVisibly(-1);
+                        event.accepted = true;
+                    } else if (!commandModifier
+                               && (event.key === Qt.Key_Down || event.key === Qt.Key_Up)) {
+                        moveCursorVertically(event.key === Qt.Key_Down ? 1 : -1,
+                                             event.modifiers & Qt.ShiftModifier);
                         event.accepted = true;
                     } else if (!commandModifier
                                && (event.key === Qt.Key_PageDown || event.key === Qt.Key_PageUp)) {

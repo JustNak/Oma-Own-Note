@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QList>
 #include <QRegularExpression>
 #include <QSyntaxHighlighter>
 #include <QTextCharFormat>
@@ -32,6 +33,17 @@ public:
     // Backend::hiddenRangesAt) to skip the caret over the hidden markers.
     static QList<InlineMarkup> inlineMarkup(const QString &text);
 
+    struct TableLine {
+        enum class Kind { None, Header, Separator, Body };
+        Kind kind = Kind::None;
+        QList<Span> hidden;
+        QList<Span> cells;
+    };
+
+    static bool isTableRow(const QString &text);
+    static bool isTableSeparator(const QString &text);
+    static TableLine parseTableLine(const QString &text);
+
 protected:
     void highlightBlock(const QString &text) override;
 
@@ -58,4 +70,6 @@ private:
     int m_currentMatchStart = -1;
     QTextCharFormat m_searchFormat;
     QTextCharFormat m_currentSearchFormat;
+    QTextCharFormat m_tableHeaderFormat;
+    QTextCharFormat m_tableBodyFormat;
 };
