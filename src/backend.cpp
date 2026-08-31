@@ -7,6 +7,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QDesktopServices>
+#include <QFont>
 #include <QGuiApplication>
 #include <QMimeData>
 #include <QProcess>
@@ -36,6 +37,8 @@
 constexpr qreal typoraLineHeightPercent = 140;
 const QString lastSaveDirectorySetting = QStringLiteral("file/lastSaveDirectory");
 const QString zoomPercentSetting = QStringLiteral("view/zoomPercent");
+
+static bool rangeNeedsTableTypography(QTextDocument *document, int position, int added);
 
 QString Backend::normalizedLinkUrl(const QString &clipboardText) {
     QString candidate = clipboardText.trimmed();
@@ -384,7 +387,8 @@ bool Backend::editorTextChanged() {
 
     if (m_document) {
         const int blockCount = m_document->blockCount();
-        if (blockCount > m_formattedBlockCount)
+        if (blockCount != m_formattedBlockCount
+                || rangeNeedsTableTypography(m_document, m_lastChangePos, m_lastChangeAdded))
             reapplyTypographyToChange();
         m_formattedBlockCount = blockCount;
     }
@@ -764,13 +768,46 @@ void Backend::scheduleWordCount() {
     m_wordCountTimer.start();
 }
 
+static bool rangeNeedsTableTypography(QTextDocument *document, int position, int added)
+{
+    if (!document)
+        return false;
+
+    const int maxPos = qMax(0, document->characterCount() - 1);
+    const int start = qBound(0, position, maxPos);
+    const int end = qBound(start, position + added, maxPos);
+    QTextBlock block = document->findBlock(start);
+    if (block.isValid() && block.previous().isValid())
+        block = block.previous();
+    const QTextBlock last = document->findBlock(end);
+    const QTextBlock stop = last.isValid() && last.next().isValid() ? last.next().next()
+                                                                   : QTextBlock();
+    for (; block.isValid() && block != stop; block = block.next()) {
+        if (MarkdownHighlighter::isTableRow(block.text())
+                || block.blockFormat().nonBreakableLines())
+            return true;
+    }
+    return false;
+}
+
 static void applyBlockLineHeight(QTextCursor &cursor, const QTextBlock &block) {
     QTextBlockFormat format = block.blockFormat();
-    if (MarkdownHighlighter::isTableSeparator(block.text()))
+    format.setTopMargin(0);
+    format.setBottomMargin(0);
+    const QTextDocument *document = block.document();
+    const QFont font = document ? document->defaultFont() : QFont();
+    if (MarkdownHighlighter::isTableSeparator(block.text())) {
         format.setLineHeight(MarkdownHighlighter::tableSeparatorLineHeight,
                              QTextBlockFormat::FixedHeight);
-    else
+        format.setNonBreakableLines(true);
+    } else if (MarkdownHighlighter::isTableRow(block.text())) {
+        format.setLineHeight(MarkdownHighlighter::tableDataRowLineHeight(font),
+                             QTextBlockFormat::MinimumHeight);
+        format.setNonBreakableLines(true);
+    } else {
         format.setLineHeight(typoraLineHeightPercent, QTextBlockFormat::ProportionalHeight);
+        format.setNonBreakableLines(false);
+    }
     cursor.setPosition(block.position());
     cursor.setBlockFormat(format);
 }

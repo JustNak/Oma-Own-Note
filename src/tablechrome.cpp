@@ -3,6 +3,7 @@
 #include "markdownhighlighter.h"
 
 #include <QAbstractTextDocumentLayout>
+#include <QFontMetricsF>
 #include <QPainter>
 #include <QQuickTextDocument>
 #include <QSize>
@@ -85,18 +86,31 @@ QVector<TableChrome::TableBox> TableChrome::collectTables(QTextDocument *documen
             return;
         }
 
-        qreal top = layout->blockBoundingRect(dataRows.first()).top();
-        qreal bottom = layout->blockBoundingRect(dataRows.last()).bottom();
+        const QRectF firstRow = layout->blockBoundingRect(dataRows.first());
+        const QRectF lastRow = layout->blockBoundingRect(dataRows.last());
+        const qreal top = firstRow.top();
         const qreal left = box.columns.first();
         const qreal right = box.columns.last();
-        box.bounds = QRectF(QPointF(left, top), QPointF(right, bottom));
+
+        QTextBlock after = run.last().next();
+        qreal tableBottom = lastRow.bottom();
+        if (after.isValid())
+            tableBottom = layout->blockBoundingRect(after).top();
+        const qreal minBottom = top
+            + MarkdownHighlighter::tableDataRowLineHeight(document->defaultFont())
+                * dataRows.size();
+        if (tableBottom < minBottom)
+            tableBottom = minBottom;
+
+        const qreal step = (tableBottom - top) / dataRows.size();
+        box.bounds = QRectF(QPointF(left, top), QPointF(right, tableBottom));
         box.rowEdges.append(top);
-        for (const QTextBlock &block : dataRows) {
-            const QRectF row = layout->blockBoundingRect(block);
-            if (block == header)
-                box.header = QRectF(QPointF(left, row.top()),
-                                    QPointF(right, row.bottom()));
-            box.rowEdges.append(row.bottom());
+        for (int i = 0; i < dataRows.size(); ++i) {
+            const qreal edge = top + step * (i + 1);
+            box.rowEdges.append(edge);
+            if (header.isValid() && dataRows.at(i).position() == header.position())
+                box.header = QRectF(QPointF(left, top + step * i),
+                                    QPointF(right, edge));
         }
         tables.append(box);
         run.clear();
@@ -118,10 +132,63 @@ QVector<TableChrome::TableBox> TableChrome::collectTables(QTextDocument *documen
     return tables;
 }
 
+qreal TableChrome::naturalWidthOf(QTextDocument *document) {
+    if (!document)
+        return 0;
+
+    const QFontMetricsF metrics(document->defaultFont());
+    const qreal left = document->documentMargin();
+    qreal maxAdvance = 0;
+    bool inFence = false;
+    for (QTextBlock block = document->begin(); block.isValid(); block = block.next()) {
+        if (MarkdownHighlighter::isFenceLine(block.text())) {
+            inFence = !inFence;
+            continue;
+        }
+        if (inFence || !MarkdownHighlighter::isTableRow(block.text()))
+            continue;
+        maxAdvance = qMax(maxAdvance, metrics.horizontalAdvance(block.text()));
+    }
+    if (maxAdvance <= 0)
+        return 0;
+    return left + maxAdvance + 2;
+}
+
 static QPoint devicePoint(const QTransform &world, qreal x, qreal y)
 {
     const QPointF mapped = world.map(QPointF(x, y));
     return QPoint(qRound(mapped.x()), qRound(mapped.y()));
+}
+
+static QVector<int> snapRowStrokes(const QTransform &world, qreal x,
+                                   const QVector<qreal> &edges)
+{
+    QVector<int> strokes;
+    if (edges.isEmpty())
+        return strokes;
+
+    const int first = devicePoint(world, x, edges.first()).y();
+    strokes.append(first);
+    const int lastIndex = edges.size() - 1;
+    if (lastIndex == 0)
+        return strokes;
+
+    const qreal itemSpan = edges.last() - edges.first();
+    const int last = devicePoint(world, x, edges.last()).y();
+    if (qAbs(itemSpan) < qreal(0.5)) {
+        for (int i = 1; i <= lastIndex; ++i)
+            strokes.append(strokes.last() + 1);
+        return strokes;
+    }
+
+    for (int i = 1; i <= lastIndex; ++i) {
+        const qreal t = (edges.at(i) - edges.first()) / itemSpan;
+        int y = first + qRound(t * (last - first));
+        if (y <= strokes.last())
+            y = strokes.last() + 1;
+        strokes.append(y);
+    }
+    return strokes;
 }
 
 void TableChrome::paintTables(QPainter *painter, QTextDocument *document,
@@ -147,12 +214,16 @@ void TableChrome::paintTables(QPainter *painter, QTextDocument *document,
         if (bounds.width() < 2 || bounds.height() < 2)
             continue;
 
+        const QVector<int> rowStrokes = snapRowStrokes(world, bounds.left(), box.rowEdges);
+        if (rowStrokes.isEmpty())
+            continue;
+
         const QPoint topLeft = devicePoint(world, bounds.left(), bounds.top());
         const QPoint bottomRight = devicePoint(world, bounds.right(), bounds.bottom());
         const int left = topLeft.x();
         const int right = bottomRight.x();
-        const int top = topLeft.y();
-        const int bottom = bottomRight.y();
+        const int top = rowStrokes.first();
+        const int bottom = rowStrokes.last();
         const int height = qMax(1, bottom - top + 1);
         const int width = qMax(1, right - left + 1);
 
@@ -160,10 +231,8 @@ void TableChrome::paintTables(QPainter *painter, QTextDocument *document,
             const int stroke = devicePoint(world, x, bounds.top()).x();
             painter->fillRect(stroke, top, 1, height, rule);
         }
-        for (qreal y : box.rowEdges) {
-            const int stroke = devicePoint(world, bounds.left(), y).y();
+        for (int stroke : rowStrokes)
             painter->fillRect(left, stroke, width, 1, rule);
-        }
     }
 
     painter->restore();
@@ -247,6 +316,14 @@ void TableChrome::paint(QPainter *painter) {
     paintTables(painter, m_document, m_paper, m_textColor, m_ruleColor);
 }
 
+void TableChrome::refreshNaturalWidth() {
+    const qreal nextWidth = naturalWidthOf(m_document);
+    if (qAbs(m_naturalWidth - nextWidth) < qreal(0.5))
+        return;
+    m_naturalWidth = nextWidth;
+    emit naturalWidthChanged();
+}
+
 void TableChrome::bindDocument(QTextDocument *document) {
     if (m_document) {
         disconnect(m_document, nullptr, this, nullptr);
@@ -255,16 +332,26 @@ void TableChrome::bindDocument(QTextDocument *document) {
     }
 
     m_document = document;
-    if (!m_document)
+    if (!m_document) {
+        if (!qFuzzyIsNull(m_naturalWidth)) {
+            m_naturalWidth = 0;
+            emit naturalWidthChanged();
+        }
         return;
+    }
 
     connect(m_document, &QTextDocument::contentsChanged, this, [this]() {
+        refreshNaturalWidth();
         update();
     });
     if (auto *layout = m_document->documentLayout()) {
         connect(layout, &QAbstractTextDocumentLayout::documentSizeChanged,
-                this, [this](const QSizeF &) { update(); });
+                this, [this](const QSizeF &) {
+            refreshNaturalWidth();
+            update();
+        });
         connect(layout, &QAbstractTextDocumentLayout::update,
                 this, [this](const QRectF &) { update(); });
     }
+    refreshNaturalWidth();
 }

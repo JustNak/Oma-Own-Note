@@ -8,6 +8,7 @@
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQuickStyle>
+#include <QQuickTextDocument>
 #include <QQuickWindow>
 #include <QSize>
 #include <QTextBlock>
@@ -374,6 +375,10 @@ private slots:
         QVERIFY(assertTableBoxPixels(QStringLiteral(
             "| asd | asd | asd |\n"
             "| --- | --- | --- |\n"
+            "|     |     |     |\n"), 4, 0.5));
+        QVERIFY(assertTableBoxPixels(QStringLiteral(
+            "| asd | asd | asd |\n"
+            "| --- | --- | --- |\n"
             "|     |     |     |\n"), 4, 0.7));
         QVERIFY(assertTableBoxPixels(QStringLiteral(
             "| asd | asd | asd |\n"
@@ -696,6 +701,117 @@ private slots:
         QCOMPARE(editor->property("width").toReal(), columnWidth);
     }
 
+    void tableInsertedRowsHaveEqualHeight() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QObject *chrome = window->findChild<QObject *>(QStringLiteral("tableChrome"));
+        QVERIFY(editor);
+        QVERIFY(chrome);
+
+        editor->setProperty("text", QStringLiteral(
+            "|     |     |     |     |     |     |\n"
+            "| --- | --- | --- | --- | --- | --- |\n"
+            "|     |     |     |     |     |     |\n"
+            "|     |     |     |     |     |     |\n"));
+        QTRY_VERIFY(chrome->property("naturalWidth").toReal() > 1);
+
+        auto *quickDocument = qobject_cast<QQuickTextDocument *>(
+            qvariant_cast<QObject *>(editor->property("textDocument")));
+        QVERIFY(quickDocument);
+        QTextDocument *document = quickDocument->textDocument();
+        QVERIFY(document);
+
+        QTextBlock header = document->begin();
+        QVERIFY(header.isValid());
+        QCOMPARE(header.blockFormat().lineHeightType(), QTextBlockFormat::MinimumHeight);
+        QCOMPARE(header.blockFormat().lineHeight(),
+                 MarkdownHighlighter::tableDataRowLineHeight(document->defaultFont()));
+        QVERIFY(header.blockFormat().nonBreakableLines());
+
+        const QTextBlock separator = header.next();
+        QVERIFY(separator.isValid());
+        QCOMPARE(separator.blockFormat().lineHeightType(), QTextBlockFormat::FixedHeight);
+        QCOMPARE(separator.blockFormat().lineHeight(),
+                 MarkdownHighlighter::tableSeparatorLineHeight);
+
+        const auto tables = TableChrome::collectTables(document);
+        QCOMPARE(tables.size(), 1);
+        const QVector<qreal> edges = tables.first().rowEdges;
+        QVERIFY(edges.size() >= 4);
+        const qreal headerGap = edges.at(1) - edges.at(0);
+        const qreal bodyGap = edges.at(2) - edges.at(1);
+        const qreal nextBodyGap = edges.at(3) - edges.at(2);
+        QVERIFY2(qAbs(headerGap - bodyGap) <= 1.0,
+                 qPrintable(QStringLiteral("header %1 vs body %2")
+                            .arg(headerGap).arg(bodyGap)));
+        QVERIFY2(qAbs(bodyGap - nextBodyGap) <= 1.0,
+                 qPrintable(QStringLiteral("body %1 vs next %2")
+                            .arg(bodyGap).arg(nextBodyGap)));
+    }
+
+    void tableZoomInEnablesHorizontalScroll() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QObject *chrome = window->findChild<QObject *>(QStringLiteral("tableChrome"));
+        QObject *flick = window->findChild<QObject *>(QStringLiteral("editorFlick"));
+        QVERIFY(editor);
+        QVERIFY(chrome);
+        QVERIFY(flick);
+
+        const qreal columnWidth = editor->property("width").toReal();
+        editor->setProperty("text", QStringLiteral(
+            "| alpha | bravo | charlie | delta | echo | foxtrot | golf | hotel |\n"
+            "| ----- | ----- | ------- | ----- | ---- | ------- | ---- | ----- |\n"
+            "|       |       |         |       |      |         |      |       |\n"));
+        QTRY_VERIFY(chrome->property("naturalWidth").toReal() > 1);
+
+        backend.zoomToPercent(300);
+        QCOMPARE(backend.zoomFactor(), 3.0);
+        QTRY_VERIFY(editor->property("width").toReal()
+                    >= chrome->property("naturalWidth").toReal() - 1);
+        QTRY_VERIFY(editor->property("width").toReal() > columnWidth / 3.0 + 1);
+        QTRY_VERIFY(flick->property("contentWidth").toReal()
+                    > flick->property("width").toReal() + 1);
+
+        auto *quickDocument = qobject_cast<QQuickTextDocument *>(
+            qvariant_cast<QObject *>(editor->property("textDocument")));
+        QVERIFY(quickDocument);
+        QTextDocument *document = quickDocument->textDocument();
+        QVERIFY(document);
+        for (QTextBlock block = document->begin(); block.isValid(); block = block.next()) {
+            if (!MarkdownHighlighter::isTableRow(block.text())
+                    || MarkdownHighlighter::isTableSeparator(block.text()))
+                continue;
+            QVERIFY(block.layout());
+            QCOMPARE(block.layout()->lineCount(), 1);
+        }
+        const auto tables = TableChrome::collectTables(document);
+        QCOMPARE(tables.size(), 1);
+        QCOMPARE(tables.first().columns.size(), 9);
+
+        backend.resetZoom();
+    }
+
     void tableChromeTextureFollowsCanvasZoom() {
         const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
         QVERIFY(!mainQmlPath.isEmpty());
@@ -910,15 +1026,24 @@ private:
         QTextCursor cursor(&document);
         for (QTextBlock block = document.begin(); block.isValid(); block = block.next()) {
             QTextBlockFormat format = block.blockFormat();
+            format.setTopMargin(0);
+            format.setBottomMargin(0);
             if (MarkdownHighlighter::isTableSeparator(block.text())) {
                 format.setLineHeight(MarkdownHighlighter::tableSeparatorLineHeight,
                                      QTextBlockFormat::FixedHeight);
+                format.setNonBreakableLines(true);
+            } else if (MarkdownHighlighter::isTableRow(block.text())) {
+                format.setLineHeight(MarkdownHighlighter::tableDataRowLineHeight(font),
+                                     QTextBlockFormat::MinimumHeight);
+                format.setNonBreakableLines(true);
             } else {
                 format.setLineHeight(140, QTextBlockFormat::ProportionalHeight);
+                format.setNonBreakableLines(false);
             }
             cursor.setPosition(block.position());
             cursor.setBlockFormat(format);
         }
+        document.setTextWidth(2000);
 
         QImage surface(1400, 240, QImage::Format_ARGB32_Premultiplied);
         surface.fill(paper);
@@ -1050,6 +1175,21 @@ private:
         }
 
         if (box.rowEdges.size() >= 3) {
+            const qreal headerGap = box.rowEdges.at(1) - box.rowEdges.at(0);
+            const qreal bodyGap = box.rowEdges.at(2) - box.rowEdges.at(1);
+            if (headerGap < 1 || qAbs(headerGap - bodyGap) > 1.0) {
+                qWarning("row gaps unequal: header %f body %f at scale %f",
+                         headerGap, bodyGap, scale);
+                return false;
+            }
+            const int deviceHeaderGap = device(box.rowEdges.at(1)) - device(box.rowEdges.at(0));
+            const int deviceBodyGap = device(box.rowEdges.at(2)) - device(box.rowEdges.at(1));
+            if (qAbs(deviceHeaderGap - deviceBodyGap) > 1) {
+                qWarning("device row gaps unequal: header %d body %d at scale %f",
+                         deviceHeaderGap, deviceBodyGap, scale);
+                return false;
+            }
+
             const int bodyY = device((box.rowEdges.at(1) + box.rowEdges.at(2)) * 0.5);
             const QColor bodyPixel = surface.pixelColor(midX, bodyY);
             if (!nearColor(bodyPixel, paper)) {
