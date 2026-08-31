@@ -116,11 +116,17 @@ QVector<TableChrome::TableBox> TableChrome::collectTables(QTextDocument *documen
         run.clear();
     };
 
+    bool inFence = false;
     for (QTextBlock block = document->begin(); block.isValid(); block = block.next()) {
-        if (MarkdownHighlighter::isTableRow(block.text()))
-            run.append(block);
-        else
+        if (MarkdownHighlighter::isFenceLine(block.text())) {
             flush();
+            inFence = !inFence;
+            continue;
+        }
+        if (inFence || !MarkdownHighlighter::isTableRow(block.text()))
+            flush();
+        else
+            run.append(block);
     }
     flush();
     return tables;

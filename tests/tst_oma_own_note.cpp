@@ -370,6 +370,51 @@ private slots:
             "|     |     |     |     |     |     |     |     |\n"), 9));
     }
 
+    void tableChromeSkipsFencedPipeRows() {
+        QTextDocument document;
+        QFont font(QStringLiteral("monospace"));
+        font.setStyleHint(QFont::Monospace);
+        font.setFixedPitch(true);
+        font.setPixelSize(16);
+        document.setDefaultFont(font);
+        document.setPlainText(QStringLiteral(
+            "```\n"
+            "| A | B |\n"
+            "| --- | --- |\n"
+            "| 1 | 2 |\n"
+            "```\n"
+            "\n"
+            "| C | D |\n"
+            "| --- | --- |\n"
+            "| 3 | 4 |\n"));
+        document.setTextWidth(2000);
+
+        QImage surface(800, 300, QImage::Format_ARGB32_Premultiplied);
+        surface.fill(Qt::white);
+        QPainter painter(&surface);
+        document.drawContents(&painter);
+        painter.end();
+
+        const auto tables = TableChrome::collectTables(&document);
+        QCOMPARE(tables.size(), 1);
+
+        QTextDocument fencedOnly;
+        fencedOnly.setDefaultFont(font);
+        fencedOnly.setPlainText(QStringLiteral(
+            "```markdown\n"
+            "| A | B |\n"
+            "| --- | --- |\n"
+            "| 1 | 2 |\n"
+            "```\n"));
+        fencedOnly.setTextWidth(2000);
+        QImage fenceSurface(800, 200, QImage::Format_ARGB32_Premultiplied);
+        fenceSurface.fill(Qt::white);
+        QPainter fencePainter(&fenceSurface);
+        fencedOnly.drawContents(&fencePainter);
+        fencePainter.end();
+        QCOMPARE(TableChrome::collectTables(&fencedOnly).size(), 0);
+    }
+
     void tabMovesBetweenTableCells() {
         const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
         QVERIFY(!mainQmlPath.isEmpty());

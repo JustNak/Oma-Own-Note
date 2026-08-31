@@ -42,6 +42,7 @@ public:
 
     static bool isTableRow(const QString &text);
     static bool isTableSeparator(const QString &text);
+    static bool isFenceLine(const QString &text);
     static TableLine parseTableLine(const QString &text);
 
     static constexpr qreal tableSeparatorLineHeight = 3;

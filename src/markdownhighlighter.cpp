@@ -117,7 +117,7 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
     constexpr int fenceState = 1;
     const bool inFence = previousBlockState() == fenceState;
     const QString trimmed = text.trimmed();
-    if (trimmed.startsWith(QLatin1String("```"))) {
+    if (isFenceLine(text)) {
         setFormat(0, text.length(), m_markerFormat);
         setCurrentBlockState(inFence ? 0 : fenceState);
         highlightSearch(text);
@@ -208,6 +208,10 @@ void MarkdownHighlighter::highlightMarkers(const QString &text) {
         if (rule.hasMatch())
             setFormat(0, text.length(), m_markerFormat);
     }
+}
+
+bool MarkdownHighlighter::isFenceLine(const QString &text) {
+    return text.trimmed().startsWith(QLatin1String("```"));
 }
 
 bool MarkdownHighlighter::isTableRow(const QString &text) {
