@@ -9,6 +9,7 @@
 #include <QQmlEngine>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QSize>
 #include <QTextBlock>
 #include <QTextBlockFormat>
 #include <QTextCursor>
@@ -369,6 +370,17 @@ private slots:
             "|     |     |     |     |     |     |     |     |\n"), 9));
     }
 
+    void tableRulesStayHairlineUnderPainterScale() {
+        QVERIFY(assertTableBoxPixels(QStringLiteral(
+            "| asd | asd | asd |\n"
+            "| --- | --- | --- |\n"
+            "|     |     |     |\n"), 4, 0.7));
+        QVERIFY(assertTableBoxPixels(QStringLiteral(
+            "| asd | asd | asd |\n"
+            "| --- | --- | --- |\n"
+            "|     |     |     |\n"), 4, 0.9));
+    }
+
     void tableChromeSkipsFencedPipeRows() {
         QTextDocument document;
         QFont font(QStringLiteral("monospace"));
@@ -684,6 +696,52 @@ private slots:
         QCOMPARE(editor->property("width").toReal(), columnWidth);
     }
 
+    void tableChromeTextureFollowsCanvasZoom() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *chrome = window->findChild<QObject *>(QStringLiteral("tableChrome"));
+        QObject *canvas = window->findChild<QObject *>(QStringLiteral("editorCanvas"));
+        QVERIFY(chrome);
+        QVERIFY(canvas);
+        QCOMPARE(chrome->property("viewScale").toReal(), 1.0);
+
+        backend.zoomToPercent(70);
+        QCOMPARE(backend.zoomFactor(), 0.7);
+        QTRY_COMPARE(canvas->property("scale").toReal(), 0.7);
+        QTRY_COMPARE(chrome->property("viewScale").toReal(), 0.7);
+        QTRY_VERIFY(chrome->property("width").toReal() > 1);
+        QTRY_COMPARE(chrome->property("textureSize").toSize().width(),
+                     qMax(1, qRound(chrome->property("width").toReal() * 0.7)));
+        QTRY_COMPARE(chrome->property("textureSize").toSize().height(),
+                     qMax(1, qRound(chrome->property("height").toReal() * 0.7)));
+
+        backend.zoomToPercent(90);
+        QCOMPARE(backend.zoomFactor(), 0.9);
+        QTRY_COMPARE(chrome->property("viewScale").toReal(), 0.9);
+        QTRY_COMPARE(chrome->property("textureSize").toSize().width(),
+                     qMax(1, qRound(chrome->property("width").toReal() * 0.9)));
+
+        backend.zoomToPercent(300);
+        QCOMPARE(backend.zoomFactor(), 3.0);
+        QTRY_COMPARE(chrome->property("viewScale").toReal(), 3.0);
+        QTRY_COMPARE(chrome->property("textureSize").toSize().width(),
+                     qMax(1, qRound(chrome->property("width").toReal() * 3.0)));
+
+        backend.resetZoom();
+        QTRY_COMPARE(chrome->property("viewScale").toReal(), 1.0);
+        QTRY_COMPARE(chrome->property("textureSize").toSize().width(),
+                     qMax(1, qRound(chrome->property("width").toReal())));
+    }
+
     void shortDocumentDoesNotPhantomScroll() {
         const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
         QVERIFY(!mainQmlPath.isEmpty());
@@ -831,7 +889,8 @@ private:
         return colorDistance(pixel, expected) <= slack;
     }
 
-    bool assertTableBoxPixels(const QString &markdown, int expectedPipes) {
+    bool assertTableBoxPixels(const QString &markdown, int expectedPipes,
+                              qreal scale = 1) {
         QTextDocument document;
         QFont font(QStringLiteral("monospace"));
         font.setStyleHint(QFont::Monospace);
@@ -864,9 +923,16 @@ private:
         QImage surface(1400, 240, QImage::Format_ARGB32_Premultiplied);
         surface.fill(paper);
         QPainter painter(&surface);
+        if (!qFuzzyCompare(scale, qreal(1)))
+            painter.scale(scale, scale);
         TableChrome::paintTables(&painter, &document, paper, text, rule);
-        document.drawContents(&painter);
+        if (qFuzzyCompare(scale, qreal(1)))
+            document.drawContents(&painter);
         painter.end();
+
+        const auto device = [scale](qreal itemPos) {
+            return qRound(itemPos * scale);
+        };
 
         const auto formatAt = [&document](int position) {
             const QTextBlock block = document.findBlock(position);
@@ -924,9 +990,13 @@ private:
             return false;
         }
 
-        const int midX = qRound((box.columns.at(0) + box.columns.at(1)) * 0.5);
-        const int headerY = qRound(box.header.top() + 2);
-        const int ruleY = qRound(box.header.center().y());
+        const int midX = device((box.columns.at(0) + box.columns.at(1)) * 0.5);
+        const int headerY = device(box.header.top()) + 2;
+        const int ruleY = device(box.header.center().y());
+        if (midX < 0 || headerY < 0 || midX >= surface.width() || headerY >= surface.height()) {
+            qWarning("header sample %d,%d is outside the surface", midX, headerY);
+            return false;
+        }
         const QColor headerPixel = surface.pixelColor(midX, headerY);
         if (!nearColor(headerPixel, paper) && !nearColor(headerPixel, text)) {
             qWarning("header cell %s is not paper or text",
@@ -935,19 +1005,20 @@ private:
         }
 
         for (qreal column : box.columns) {
-            const int pipeX = qRound(column);
+            const int pipeX = device(column);
             const QColor pipePixel = surface.pixelColor(pipeX, ruleY);
             if (!nearColor(pipePixel, rule)) {
-                qWarning("gutter %s is not a rule %s",
-                         qPrintable(pipePixel.name()), qPrintable(rule.name()));
+                qWarning("gutter %s is not a rule %s at scale %f col %f pipeX %d ruleY %d",
+                         qPrintable(pipePixel.name()), qPrintable(rule.name()), scale,
+                         column, pipeX, ruleY);
                 return false;
             }
         }
 
-        const int left = qRound(box.bounds.left());
-        const int right = qRound(box.bounds.right());
-        const int top = qRound(box.bounds.top());
-        const int bottom = qRound(box.bounds.bottom());
+        const int left = device(box.bounds.left());
+        const int right = device(box.bounds.right());
+        const int top = device(box.bounds.top());
+        const int bottom = device(box.bounds.bottom());
         const QColor leftEdge = surface.pixelColor(left, ruleY);
         const QColor rightEdge = surface.pixelColor(right, ruleY);
         const QColor topEdge = surface.pixelColor(midX, top);
@@ -961,8 +1032,8 @@ private:
             return false;
         }
 
-        const int fromY = qRound(box.header.top());
-        const int toY = qRound(box.bounds.bottom());
+        const int fromY = device(box.header.top());
+        const int toY = device(box.bounds.bottom());
         int longestRuleRun = 0;
         int currentRule = 0;
         for (int y = fromY; y <= toY; ++y) {
@@ -979,7 +1050,7 @@ private:
         }
 
         if (box.rowEdges.size() >= 3) {
-            const int bodyY = qRound((box.rowEdges.at(1) + box.rowEdges.at(2)) * 0.5);
+            const int bodyY = device((box.rowEdges.at(1) + box.rowEdges.at(2)) * 0.5);
             const QColor bodyPixel = surface.pixelColor(midX, bodyY);
             if (!nearColor(bodyPixel, paper)) {
                 qWarning("body cell %s is not paper", qPrintable(bodyPixel.name()));

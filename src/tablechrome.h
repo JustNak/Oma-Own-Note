@@ -17,6 +17,7 @@ class TableChrome : public QQuickPaintedItem {
     Q_PROPERTY(QColor paper READ paper WRITE setPaper NOTIFY paperChanged)
     Q_PROPERTY(QColor textColor READ textColor WRITE setTextColor NOTIFY textColorChanged)
     Q_PROPERTY(QColor ruleColor READ ruleColor WRITE setRuleColor NOTIFY ruleColorChanged)
+    Q_PROPERTY(qreal viewScale READ viewScale WRITE setViewScale NOTIFY viewScaleChanged)
 
 public:
     struct TableBox {
@@ -46,6 +47,9 @@ public:
     QColor ruleColor() const { return m_ruleColor; }
     void setRuleColor(const QColor &ruleColor);
 
+    qreal viewScale() const { return m_viewScale; }
+    void setViewScale(qreal viewScale);
+
     void paint(QPainter *painter) override;
 
 signals:
@@ -53,13 +57,19 @@ signals:
     void paperChanged();
     void textColorChanged();
     void ruleColorChanged();
+    void viewScaleChanged();
+
+protected:
+    void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
 
 private:
     void bindDocument(QTextDocument *document);
+    void syncTextureSize();
 
     QPointer<QObject> m_textDocumentObject;
     QPointer<QTextDocument> m_document;
     QColor m_paper = QColor(QStringLiteral("#101010"));
     QColor m_textColor = QColor(QStringLiteral("#eeeeee"));
     QColor m_ruleColor = QColor(QStringLiteral("#eeeeee"));
+    qreal m_viewScale = 1;
 };

@@ -4,11 +4,12 @@
 
 #include <QAbstractTextDocumentLayout>
 #include <QPainter>
-#include <QPen>
 #include <QQuickTextDocument>
+#include <QSize>
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextLine>
+#include <QTransform>
 #include <QtQml>
 
 TableChrome::TableChrome(QQuickItem *parent)
@@ -117,6 +118,12 @@ QVector<TableChrome::TableBox> TableChrome::collectTables(QTextDocument *documen
     return tables;
 }
 
+static QPoint devicePoint(const QTransform &world, qreal x, qreal y)
+{
+    const QPointF mapped = world.map(QPointF(x, y));
+    return QPoint(qRound(mapped.x()), qRound(mapped.y()));
+}
+
 void TableChrome::paintTables(QPainter *painter, QTextDocument *document,
                               const QColor &, const QColor &,
                               const QColor &rule) {
@@ -127,7 +134,12 @@ void TableChrome::paintTables(QPainter *painter, QTextDocument *document,
     if (tables.isEmpty())
         return;
 
+    // Cosmetic 1px pens miss at fractional canvas zoom. Map through the
+    // current transform, then fill whole device pixels with it turned off.
+    const QTransform world = painter->combinedTransform();
+
     painter->save();
+    painter->resetTransform();
     painter->setRenderHint(QPainter::Antialiasing, false);
 
     for (const TableBox &box : tables) {
@@ -135,19 +147,22 @@ void TableChrome::paintTables(QPainter *painter, QTextDocument *document,
         if (bounds.width() < 2 || bounds.height() < 2)
             continue;
 
-        QPen pen(rule, 1);
-        pen.setCosmetic(true);
-        painter->setPen(pen);
+        const QPoint topLeft = devicePoint(world, bounds.left(), bounds.top());
+        const QPoint bottomRight = devicePoint(world, bounds.right(), bounds.bottom());
+        const int left = topLeft.x();
+        const int right = bottomRight.x();
+        const int top = topLeft.y();
+        const int bottom = bottomRight.y();
+        const int height = qMax(1, bottom - top + 1);
+        const int width = qMax(1, right - left + 1);
 
         for (qreal x : box.columns) {
-            const int stroke = qRound(x);
-            painter->drawLine(QPoint(stroke, qRound(bounds.top())),
-                              QPoint(stroke, qRound(bounds.bottom())));
+            const int stroke = devicePoint(world, x, bounds.top()).x();
+            painter->fillRect(stroke, top, 1, height, rule);
         }
         for (qreal y : box.rowEdges) {
-            const int stroke = qRound(y);
-            painter->drawLine(QPoint(qRound(bounds.left()), stroke),
-                              QPoint(qRound(bounds.right()), stroke));
+            const int stroke = devicePoint(world, bounds.left(), y).y();
+            painter->fillRect(left, stroke, width, 1, rule);
         }
     }
 
@@ -193,7 +208,42 @@ void TableChrome::setRuleColor(const QColor &ruleColor) {
     update();
 }
 
+void TableChrome::setViewScale(qreal viewScale) {
+    const qreal scale = qMax(viewScale, qreal(0.01));
+    if (qFuzzyCompare(m_viewScale, scale))
+        return;
+    m_viewScale = scale;
+    emit viewScaleChanged();
+    syncTextureSize();
+    update();
+}
+
+void TableChrome::geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) {
+    QQuickPaintedItem::geometryChange(newGeometry, oldGeometry);
+    if (newGeometry.size() != oldGeometry.size())
+        syncTextureSize();
+}
+
+void TableChrome::syncTextureSize() {
+    const QSize size(qMax(1, qRound(width() * m_viewScale)),
+                     qMax(1, qRound(height() * m_viewScale)));
+    if (textureSize() != size)
+        setTextureSize(size);
+}
+
 void TableChrome::paint(QPainter *painter) {
+    if (!painter)
+        return;
+    // QQuickPaintedItem already scales the painter to textureSize. Apply
+    // viewScale only when that transform is still identity.
+    const qreal mapped = qAbs(painter->transform().m11());
+    if (mapped > 0.98 && mapped < 1.02 && !qFuzzyCompare(m_viewScale, qreal(1))) {
+        painter->save();
+        painter->scale(m_viewScale, m_viewScale);
+        paintTables(painter, m_document, m_paper, m_textColor, m_ruleColor);
+        painter->restore();
+        return;
+    }
     paintTables(painter, m_document, m_paper, m_textColor, m_ruleColor);
 }
 

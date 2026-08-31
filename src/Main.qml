@@ -687,6 +687,9 @@ ApplicationWindow {
                 paper: win.pageColor
                 textColor: win.textColor
                 ruleColor: win.textColor
+                // Paint at the post-zoom pixel grid so Item.scale does not
+                // stretch 1px hairlines into fractional, uneven strokes.
+                viewScale: canvas.scale
             }
 
             TextEdit {
