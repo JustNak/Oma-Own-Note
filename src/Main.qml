@@ -686,7 +686,7 @@ ApplicationWindow {
                 textDocument: editor.textDocument
                 paper: win.pageColor
                 textColor: win.textColor
-                ruleColor: win.darkMode ? "#4f525a" : "#aeb1b5"
+                ruleColor: win.textColor
             }
 
             TextEdit {

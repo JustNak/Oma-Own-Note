@@ -24,21 +24,6 @@ void TableChrome::registerQmlType() {
     Q_UNUSED(typeId);
 }
 
-QColor TableChrome::mixToward(const QColor &from, const QColor &to, qreal amount) {
-    return QColor::fromRgbF(from.redF() + (to.redF() - from.redF()) * amount,
-                            from.greenF() + (to.greenF() - from.greenF()) * amount,
-                            from.blueF() + (to.blueF() - from.blueF()) * amount,
-                            from.alphaF() + (to.alphaF() - from.alphaF()) * amount);
-}
-
-QColor TableChrome::headerFill(const QColor &paper, const QColor &text) {
-    return mixToward(paper, text, 0.14);
-}
-
-QColor TableChrome::bodyFill(const QColor &paper, const QColor &text) {
-    return mixToward(paper, text, 0.07);
-}
-
 static QVector<qreal> pipeCenters(const QTextBlock &block) {
     QVector<qreal> xs;
     if (!block.isValid() || !block.document() || !block.layout()
@@ -133,7 +118,7 @@ QVector<TableChrome::TableBox> TableChrome::collectTables(QTextDocument *documen
 }
 
 void TableChrome::paintTables(QPainter *painter, QTextDocument *document,
-                              const QColor &paper, const QColor &text,
+                              const QColor &, const QColor &,
                               const QColor &rule) {
     if (!painter || !document)
         return;
@@ -142,8 +127,6 @@ void TableChrome::paintTables(QPainter *painter, QTextDocument *document,
     if (tables.isEmpty())
         return;
 
-    const QColor header = headerFill(paper, text);
-    const QColor body = bodyFill(paper, text);
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing, false);
 
@@ -151,10 +134,6 @@ void TableChrome::paintTables(QPainter *painter, QTextDocument *document,
         const QRectF bounds = box.bounds.normalized();
         if (bounds.width() < 2 || bounds.height() < 2)
             continue;
-
-        painter->fillRect(bounds, body);
-        if (box.header.isValid())
-            painter->fillRect(box.header.normalized(), header);
 
         QPen pen(rule, 1);
         pen.setCosmetic(true);

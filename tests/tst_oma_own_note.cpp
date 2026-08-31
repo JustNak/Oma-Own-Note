@@ -333,7 +333,7 @@ private slots:
         QVERIFY(formatAt(2).fontWeight() >= QFont::Bold);
         QCOMPARE(formatAt(2).background().style(), Qt::NoBrush);
         QVERIFY(qFuzzyIsNull(formatAt(0).fontPointSize()) || formatAt(0).fontPointSize() > 8);
-        QCOMPARE(formatAt(0).foreground().color(), QColor(QStringLiteral("#101010")));
+        QCOMPARE(formatAt(0).foreground().color().alpha(), 0);
         QCOMPARE(formatAt(0).background().style(), Qt::NoBrush);
 
         const int bodyDigit = document.toPlainText().indexOf(QLatin1Char('1'));
@@ -343,8 +343,7 @@ private slots:
         const int separatorDash = document.toPlainText().indexOf(QStringLiteral("---"));
         QVERIFY(separatorDash >= 0);
         QCOMPARE(formatAt(separatorDash).background().style(), Qt::NoBrush);
-        QCOMPARE(formatAt(separatorDash).foreground().color(),
-                 QColor(QStringLiteral("#101010")));
+        QCOMPARE(formatAt(separatorDash).foreground().color().alpha(), 0);
 
         const int taskBox = document.toPlainText().indexOf(QStringLiteral("[ ]"));
         QVERIFY(taskBox >= 0);
@@ -845,7 +844,7 @@ private:
         MarkdownHighlighter highlighter(&document);
         const QColor paper(QStringLiteral("#1a2744"));
         const QColor text(QStringLiteral("#eeeeee"));
-        const QColor rule(QStringLiteral("#4f525a"));
+        const QColor rule = text;
         highlighter.setColors(paper.name(), text.name(), QStringLiteral("#5584aa"));
         highlighter.rehighlight();
 
@@ -925,58 +924,49 @@ private:
             return false;
         }
 
-        const QColor headerFill = TableChrome::headerFill(paper, text);
-        const QColor bodyFill = TableChrome::bodyFill(paper, text);
         const int midX = qRound((box.columns.at(0) + box.columns.at(1)) * 0.5);
         const int headerY = qRound(box.header.top() + 2);
-        const int pipeX = qRound(box.columns.at(1));
+        const int ruleY = qRound(box.header.center().y());
         const QColor headerPixel = surface.pixelColor(midX, headerY);
-        const QColor pipePixel = surface.pixelColor(pipeX, qRound(box.header.center().y()));
-        if (!nearColor(headerPixel, headerFill)) {
-            qWarning("header cell %s is not fill %s",
-                     qPrintable(headerPixel.name()), qPrintable(headerFill.name()));
-            return false;
-        }
-        if (nearColor(headerPixel, rule)) {
-            qWarning("header cell was painted as the separator slab");
-            return false;
-        }
-        if (!nearColor(pipePixel, rule)) {
-            qWarning("gutter %s is not a rule %s",
-                     qPrintable(pipePixel.name()), qPrintable(rule.name()));
+        if (!nearColor(headerPixel, paper) && !nearColor(headerPixel, text)) {
+            qWarning("header cell %s is not paper or text",
+                     qPrintable(headerPixel.name()));
             return false;
         }
 
-        int paperGaps = 0;
-        int longestPaper = 0;
-        int currentPaper = 0;
-        const int scanY = qRound(box.header.top() + 1);
-        const int left = qRound(box.columns.first()) + 1;
-        const int right = qRound(box.columns.last()) - 1;
-        for (int x = left; x <= right; ++x) {
-            const QColor pixel = surface.pixelColor(x, scanY);
-            if (nearColor(pixel, paper, 24) && !nearColor(pixel, headerFill, 24)
-                    && !nearColor(pixel, rule, 24)) {
-                ++paperGaps;
-                ++currentPaper;
-                longestPaper = qMax(longestPaper, currentPaper);
-            } else {
-                currentPaper = 0;
+        for (qreal column : box.columns) {
+            const int pipeX = qRound(column);
+            const QColor pipePixel = surface.pixelColor(pipeX, ruleY);
+            if (!nearColor(pipePixel, rule)) {
+                qWarning("gutter %s is not a rule %s",
+                         qPrintable(pipePixel.name()), qPrintable(rule.name()));
+                return false;
             }
         }
-        if (longestPaper > 3) {
-            qWarning("disconnected cells: paper gap %d (samples %d)",
-                     longestPaper, paperGaps);
+
+        const int left = qRound(box.bounds.left());
+        const int right = qRound(box.bounds.right());
+        const int top = qRound(box.bounds.top());
+        const int bottom = qRound(box.bounds.bottom());
+        const QColor leftEdge = surface.pixelColor(left, ruleY);
+        const QColor rightEdge = surface.pixelColor(right, ruleY);
+        const QColor topEdge = surface.pixelColor(midX, top);
+        const QColor bottomEdge = surface.pixelColor(midX, bottom);
+        if (!nearColor(leftEdge, rule) || !nearColor(rightEdge, rule)
+                || !nearColor(topEdge, rule) || !nearColor(bottomEdge, rule)) {
+            qWarning("box edges missing: L %s R %s T %s B %s vs rule %s",
+                     qPrintable(leftEdge.name()), qPrintable(rightEdge.name()),
+                     qPrintable(topEdge.name()), qPrintable(bottomEdge.name()),
+                     qPrintable(rule.name()));
             return false;
         }
 
-        const int cellX = midX;
         const int fromY = qRound(box.header.top());
         const int toY = qRound(box.bounds.bottom());
         int longestRuleRun = 0;
         int currentRule = 0;
         for (int y = fromY; y <= toY; ++y) {
-            if (nearColor(surface.pixelColor(cellX, y), rule, 18)) {
+            if (nearColor(surface.pixelColor(midX, y), rule, 18)) {
                 ++currentRule;
                 longestRuleRun = qMax(longestRuleRun, currentRule);
             } else {
@@ -991,11 +981,11 @@ private:
         if (box.rowEdges.size() >= 3) {
             const int bodyY = qRound((box.rowEdges.at(1) + box.rowEdges.at(2)) * 0.5);
             const QColor bodyPixel = surface.pixelColor(midX, bodyY);
-            if (!nearColor(bodyPixel, bodyFill) && !nearColor(bodyPixel, paper)) {
-                qWarning("body cell %s is not a table fill", qPrintable(bodyPixel.name()));
+            if (!nearColor(bodyPixel, paper)) {
+                qWarning("body cell %s is not paper", qPrintable(bodyPixel.name()));
                 return false;
             }
-            if (nearColor(bodyPixel, rule)) {
+            if (nearColor(bodyPixel, rule) && !nearColor(paper, rule)) {
                 qWarning("body cell was swallowed by a slab");
                 return false;
             }

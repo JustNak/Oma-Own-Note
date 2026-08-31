@@ -29,9 +29,6 @@ public:
     explicit TableChrome(QQuickItem *parent = nullptr);
 
     static void registerQmlType();
-    static QColor mixToward(const QColor &from, const QColor &to, qreal amount);
-    static QColor headerFill(const QColor &paper, const QColor &text);
-    static QColor bodyFill(const QColor &paper, const QColor &text);
     static QVector<TableBox> collectTables(QTextDocument *document);
     static void paintTables(QPainter *painter, QTextDocument *document,
                             const QColor &paper, const QColor &text,
@@ -64,5 +61,5 @@ private:
     QPointer<QTextDocument> m_document;
     QColor m_paper = QColor(QStringLiteral("#101010"));
     QColor m_textColor = QColor(QStringLiteral("#eeeeee"));
-    QColor m_ruleColor = QColor(QStringLiteral("#4f525a"));
+    QColor m_ruleColor = QColor(QStringLiteral("#eeeeee"));
 };
