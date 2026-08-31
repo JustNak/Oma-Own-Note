@@ -487,7 +487,23 @@ function applyInsert(editor, kind, options) {
     }
 
     if (kind === "divider") {
-        insertIsolated(editor, horizontalRule() + "\n", 4, 4);
+        var rule = horizontalRule();
+        if (start === end) {
+            var dividerBounds = lineBounds(text, editor.cursorPosition);
+            if (dividerBounds.line.trim().length === 0) {
+                start = dividerBounds.start;
+                end = dividerBounds.end;
+            } else {
+                start = dividerBounds.end;
+                end = dividerBounds.end;
+            }
+        }
+        var wrappedRule = isolateBlock(text, start, end, rule);
+        var ruleText = wrappedRule.text;
+        var afterRule = wrappedRule.shift + rule.length;
+        if (afterRule >= ruleText.length || ruleText.charAt(afterRule) !== "\n")
+            ruleText += "\n";
+        replaceRange(editor, start, end, ruleText, afterRule + 1, afterRule + 1);
         return;
     }
 

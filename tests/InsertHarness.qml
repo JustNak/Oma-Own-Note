@@ -25,6 +25,8 @@ TextEdit {
     property string escapedImage
     property bool oneColumnMoved
     property int oneColumnCursor
+    property string dividerMidText
+    property int dividerMidCursor
 
     Component.onCompleted: {
         text = "";
@@ -90,6 +92,12 @@ TextEdit {
         EditorMutations.applyInsert(this, "divider");
         dividerText = text;
         dividerCursor = cursorPosition;
+
+        text = "hello\nworld";
+        cursorPosition = 4;
+        EditorMutations.applyInsert(this, "divider");
+        dividerMidText = text;
+        dividerMidCursor = cursorPosition;
 
         escapedImage = EditorMutations.imageMarkdown("Cat [1]", "photo (2).png");
 

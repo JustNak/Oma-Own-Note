@@ -200,6 +200,9 @@ private slots:
         QCOMPARE(editor->property("nextCellStart").toInt(), 6);
         QCOMPARE(editor->property("dividerText").toString(), QStringLiteral("---\n"));
         QCOMPARE(editor->property("dividerCursor").toInt(), 4);
+        QCOMPARE(editor->property("dividerMidText").toString(),
+                 QStringLiteral("hello\n\n---\n\nworld"));
+        QCOMPARE(editor->property("dividerMidCursor").toInt(), 11);
         QCOMPARE(editor->property("escapedImage").toString(),
                  QStringLiteral("![Cat \\[1\\]](<photo (2).png>)"));
         QVERIFY(editor->property("oneColumnMoved").toBool());
