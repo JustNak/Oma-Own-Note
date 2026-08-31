@@ -198,6 +198,12 @@ private slots:
         QCOMPARE(editor->property("relativeImage").toString(), QStringLiteral("img/cat.png"));
         QVERIFY(editor->property("movedInTable").toBool());
         QCOMPARE(editor->property("nextCellStart").toInt(), 6);
+        QCOMPARE(editor->property("dividerText").toString(), QStringLiteral("---\n"));
+        QCOMPARE(editor->property("dividerCursor").toInt(), 4);
+        QCOMPARE(editor->property("escapedImage").toString(),
+                 QStringLiteral("![Cat \\[1\\]](<photo (2).png>)"));
+        QVERIFY(editor->property("oneColumnMoved").toBool());
+        QCOMPARE(editor->property("oneColumnCursor").toInt(), 16);
     }
 
     void insertPaletteOpensOnCtrlTab() {

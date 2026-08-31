@@ -20,6 +20,11 @@ TextEdit {
     property int nextCellStart
     property int nextCellEnd
     property string pipeTableSample
+    property string dividerText
+    property int dividerCursor
+    property string escapedImage
+    property bool oneColumnMoved
+    property int oneColumnCursor
 
     Component.onCompleted: {
         text = "";
@@ -79,5 +84,20 @@ TextEdit {
         nextCellEnd = selectionEnd;
         if (selectionStart === selectionEnd)
             nextCellStart = nextCellEnd = cursorPosition;
+
+        text = "";
+        cursorPosition = 0;
+        EditorMutations.applyInsert(this, "divider");
+        dividerText = text;
+        dividerCursor = cursorPosition;
+
+        escapedImage = EditorMutations.imageMarkdown("Cat [1]", "photo (2).png");
+
+        text = EditorMutations.pipeTable(1, 2);
+        cursorPosition = 2;
+        oneColumnMoved = EditorMutations.moveTableCell(this, 1);
+        oneColumnCursor = cursorPosition;
+        if (selectionStart !== selectionEnd)
+            oneColumnCursor = selectionStart;
     }
 }

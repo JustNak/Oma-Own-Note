@@ -191,8 +191,25 @@ function tableFromSelection(selected) {
     return out.join("\n");
 }
 
+function escapeMarkdownLinkText(linkText) {
+    return String(linkText || "").replace(/\\/g, "\\\\")
+                                 .replace(/\[/g, "\\[")
+                                 .replace(/\]/g, "\\]");
+}
+
+function escapeMarkdownLinkDestination(linkUrl) {
+    return String(linkUrl || "").replace(/\\/g, "\\\\")
+                                .replace(/\(/g, "\\(")
+                                .replace(/\)/g, "\\)");
+}
+
 function imageMarkdown(alt, path) {
-    return "![" + (alt || "") + "](" + (path || "") + ")";
+    var dest = String(path || "");
+    if (/[\s<>]/.test(dest))
+        dest = "<" + dest.replace(/\\/g, "\\\\").replace(/>/g, "\\>") + ">";
+    else
+        dest = escapeMarkdownLinkDestination(dest);
+    return "![" + escapeMarkdownLinkText(alt) + "](" + dest + ")";
 }
 
 function imageAltFromPath(path) {
@@ -447,9 +464,9 @@ function applyInsert(editor, kind, options) {
         return;
     }
     if (kind === "image") {
-        var markdown = imageMarkdown(options.alt || "alt", options.path || "");
         var alt = options.alt || "alt";
-        insertIsolated(editor, markdown, 2, 2 + alt.length);
+        var markdown = imageMarkdown(alt, options.path || "");
+        insertIsolated(editor, markdown, 2, 2 + escapeMarkdownLinkText(alt).length);
         return;
     }
     if (kind === "link")
@@ -470,7 +487,7 @@ function applyInsert(editor, kind, options) {
     }
 
     if (kind === "divider") {
-        insertIsolated(editor, horizontalRule(), 3, 3);
+        insertIsolated(editor, horizontalRule() + "\n", 4, 4);
         return;
     }
 
@@ -508,7 +525,10 @@ function isTableRow(line) {
 }
 
 function isSeparatorRow(line) {
-    return /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(line);
+    var trimmed = line.trim();
+    if (!isTableRow(trimmed))
+        return false;
+    return /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(line);
 }
 
 function parseTableRow(line) {
