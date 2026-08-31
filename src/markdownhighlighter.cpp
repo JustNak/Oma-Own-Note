@@ -102,6 +102,16 @@ void MarkdownHighlighter::rebuildFormats() {
     m_currentSearchFormat = QTextCharFormat();
     m_currentSearchFormat.setBackground(m_darkMode ? QColor(QStringLiteral("#b36b20"))
                                                    : QColor(QStringLiteral("#ffad42")));
+
+    const QColor headerFill = m_darkMode ? QColor(QStringLiteral("#1c1c1a"))
+                                         : QColor(QStringLiteral("#f4f4ea"));
+    m_tableHeaderFormat = QTextCharFormat();
+    m_tableHeaderFormat.setForeground(text);
+    m_tableHeaderFormat.setFontWeight(QFont::Bold);
+    m_tableHeaderFormat.setBackground(headerFill);
+
+    m_tableBodyFormat = QTextCharFormat();
+    m_tableBodyFormat.setForeground(text);
 }
 
 void MarkdownHighlighter::highlightBlock(const QString &text) {
@@ -201,14 +211,14 @@ void MarkdownHighlighter::highlightMarkers(const QString &text) {
     }
 }
 
-static bool isPipeTableLine(const QString &text) {
+bool MarkdownHighlighter::isTableRow(const QString &text) {
     const QString trimmed = text.trimmed();
     return trimmed.startsWith(QLatin1Char('|')) && trimmed.indexOf(QLatin1Char('|'), 1) >= 0;
 }
 
-static bool isPipeSeparatorLine(const QString &text) {
+bool MarkdownHighlighter::isTableSeparator(const QString &text) {
     const QString trimmed = text.trimmed();
-    if (!isPipeTableLine(trimmed))
+    if (!isTableRow(trimmed))
         return false;
 
     bool sawDash = false;
@@ -224,28 +234,47 @@ static bool isPipeSeparatorLine(const QString &text) {
     return sawDash;
 }
 
-void MarkdownHighlighter::highlightTable(const QString &text) {
-    if (!isPipeTableLine(text))
-        return;
+MarkdownHighlighter::TableLine MarkdownHighlighter::parseTableLine(const QString &text) {
+    TableLine line;
+    if (!isTableRow(text))
+        return line;
 
-    const bool separator = isPipeSeparatorLine(text);
-    const QTextBlock next = currentBlock().next();
-    const bool header = !separator && next.isValid() && isPipeSeparatorLine(next.text());
-
+    line.kind = isTableSeparator(text) ? TableLine::Kind::Separator : TableLine::Kind::Body;
     int cellStart = 0;
     for (int i = 0; i <= text.length(); ++i) {
         if (i == text.length() || text.at(i) == QLatin1Char('|')) {
-            if (i > cellStart) {
-                if (separator)
-                    setFormat(cellStart, i - cellStart, m_markerFormat);
-                else if (header)
-                    setFormat(cellStart, i - cellStart, m_headingFormat);
-            }
+            if (i > cellStart)
+                line.cells.append(Span{cellStart, i - cellStart});
             if (i < text.length())
-                setFormat(i, 1, m_markerFormat);
+                line.hidden.append(Span{i, 1});
             cellStart = i + 1;
         }
     }
+    if (line.kind == TableLine::Kind::Separator)
+        line.hidden = {Span{0, int(text.length())}};
+    return line;
+}
+
+void MarkdownHighlighter::highlightTable(const QString &text) {
+    TableLine line = parseTableLine(text);
+    if (line.kind == TableLine::Kind::None)
+        return;
+
+    if (line.kind != TableLine::Kind::Separator) {
+        const QTextBlock next = currentBlock().next();
+        if (next.isValid() && isTableSeparator(next.text()))
+            line.kind = TableLine::Kind::Header;
+    }
+
+    const QTextCharFormat &cellFormat = line.kind == TableLine::Kind::Header
+        ? m_tableHeaderFormat
+        : m_tableBodyFormat;
+    if (line.kind != TableLine::Kind::Separator) {
+        for (const Span &cell : line.cells)
+            setFormat(cell.start, cell.length, cellFormat);
+    }
+    for (const Span &hidden : line.hidden)
+        setFormat(hidden.start, hidden.length, m_hiddenMarkerFormat);
 }
 
 void MarkdownHighlighter::highlightInline(const QString &text) {

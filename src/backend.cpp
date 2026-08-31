@@ -416,6 +416,17 @@ QVariantList Backend::hiddenRangesAt(int position) const {
                           lineStart + marker.start + marker.length});
         }
     }
+    const MarkdownHighlighter::TableLine table =
+        MarkdownHighlighter::parseTableLine(block.text());
+    for (const MarkdownHighlighter::Span &hidden : table.hidden) {
+        spans.append({lineStart + hidden.start,
+                      lineStart + hidden.start + hidden.length});
+    }
+    if (table.kind == MarkdownHighlighter::TableLine::Kind::Separator
+            && block.next().isValid()) {
+        spans.append({lineStart + block.text().length(),
+                      lineStart + block.text().length() + 1});
+    }
     std::sort(spans.begin(), spans.end());
 
     for (const auto &span : spans) {
@@ -753,12 +764,19 @@ void Backend::scheduleWordCount() {
     m_wordCountTimer.start();
 }
 
+static void applyBlockLineHeight(QTextCursor &cursor, const QTextBlock &block) {
+    QTextBlockFormat format = block.blockFormat();
+    if (MarkdownHighlighter::isTableSeparator(block.text()))
+        format.setLineHeight(2, QTextBlockFormat::FixedHeight);
+    else
+        format.setLineHeight(typoraLineHeightPercent, QTextBlockFormat::ProportionalHeight);
+    cursor.setPosition(block.position());
+    cursor.setBlockFormat(format);
+}
+
 void Backend::applyDocumentTypography() {
     if (!m_document)
         return;
-
-    QTextBlockFormat blockFormat;
-    blockFormat.setLineHeight(typoraLineHeightPercent, QTextBlockFormat::ProportionalHeight);
 
     // A full pass is only used for freshly loaded/attached documents, so it is
     // safe to drop undo history here (re-enabling clears the stack anyway).
@@ -767,8 +785,8 @@ void Backend::applyDocumentTypography() {
 
     m_formattingTypography = true;
     QTextCursor cursor(m_document);
-    cursor.select(QTextCursor::Document);
-    cursor.mergeBlockFormat(blockFormat);
+    for (QTextBlock block = m_document->begin(); block.isValid(); block = block.next())
+        applyBlockLineHeight(cursor, block);
     m_formattingTypography = false;
 
     m_document->setUndoRedoEnabled(undoEnabled);
@@ -780,9 +798,6 @@ void Backend::reapplyTypographyToChange() {
     if (!m_document)
         return;
 
-    QTextBlockFormat blockFormat;
-    blockFormat.setLineHeight(typoraLineHeightPercent, QTextBlockFormat::ProportionalHeight);
-
     // Format only the block(s) touched by the last edit instead of the whole
     // document, and fold the change into the preceding edit command so a single
     // undo reverts both the text and its formatting.
@@ -793,9 +808,14 @@ void Backend::reapplyTypographyToChange() {
     m_formattingTypography = true;
     QTextCursor cursor(m_document);
     cursor.joinPreviousEditBlock();
-    cursor.setPosition(start);
-    cursor.setPosition(end, QTextCursor::KeepAnchor);
-    cursor.mergeBlockFormat(blockFormat);
+    QTextBlock block = m_document->findBlock(start);
+    const QTextBlock last = m_document->findBlock(end);
+    if (block.isValid() && block.previous().isValid())
+        block = block.previous();
+    QTextBlock stop = last.isValid() && last.next().isValid() ? last.next().next()
+                                                              : QTextBlock();
+    for (; block.isValid() && block != stop; block = block.next())
+        applyBlockLineHeight(cursor, block);
     cursor.endEditBlock();
     m_formattingTypography = false;
 }
