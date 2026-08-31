@@ -1008,8 +1008,9 @@ private:
             const int pipeX = device(column);
             const QColor pipePixel = surface.pixelColor(pipeX, ruleY);
             if (!nearColor(pipePixel, rule)) {
-                qWarning("gutter %s is not a rule %s at scale %f",
-                         qPrintable(pipePixel.name()), qPrintable(rule.name()), scale);
+                qWarning("gutter %s is not a rule %s at scale %f col %f pipeX %d ruleY %d",
+                         qPrintable(pipePixel.name()), qPrintable(rule.name()), scale,
+                         column, pipeX, ruleY);
                 return false;
             }
         }

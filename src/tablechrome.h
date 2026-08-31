@@ -33,7 +33,7 @@ public:
     static QVector<TableBox> collectTables(QTextDocument *document);
     static void paintTables(QPainter *painter, QTextDocument *document,
                             const QColor &paper, const QColor &text,
-                            const QColor &rule, qreal deviceScale = 0);
+                            const QColor &rule);
 
     QObject *textDocument() const { return m_textDocumentObject; }
     void setTextDocument(QObject *textDocument);
