@@ -1,10 +1,14 @@
 #include <QtTest>
+#include <QColor>
 #include <QFont>
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QTextBlock>
+#include <QTextDocument>
+#include <QTextLayout>
 
 #include "backend.h"
 #include "markdownhighlighter.h"
@@ -162,6 +166,147 @@ private slots:
                  QStringLiteral("alpha **beta** omega"));
         QCOMPARE(editor->property("wrappedSelectionStart").toInt(), 8);
         QCOMPARE(editor->property("wrappedSelectionEnd").toInt(), 12);
+    }
+
+    void insertsMarkdownBlocksAndTables() {
+        const QString harnessPath = QFINDTESTDATA("InsertHarness.qml");
+        QVERIFY(!harnessPath.isEmpty());
+
+        QQmlEngine engine;
+        QQmlComponent component(&engine, QUrl::fromLocalFile(harnessPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> editor(component.create());
+        QVERIFY2(editor, qPrintable(component.errorString()));
+
+        QCOMPARE(editor->property("headingText").toString(), QStringLiteral("# "));
+        QCOMPARE(editor->property("headingCursor").toInt(), 2);
+        QCOMPARE(editor->property("selectedHeading").toString(), QStringLiteral("# hello"));
+        QCOMPARE(editor->property("midLineHeading").toString(), QStringLiteral("hello\n\n# "));
+        QCOMPARE(editor->property("pipeTableSample").toString(),
+                 QStringLiteral("|  |  |  |\n| --- | --- | --- |\n|  |  |  |"));
+        QCOMPARE(editor->property("tableText").toString(),
+                 QStringLiteral("|  |  |  |\n| --- | --- | --- |\n|  |  |  |"));
+        QCOMPARE(editor->property("tableCursor").toInt(), 2);
+        QCOMPARE(editor->property("convertedText").toString(),
+                 QStringLiteral("| a | b |\n| --- | --- |\n| 1 | 2 |"));
+        QCOMPARE(editor->property("fenceText").toString(), QStringLiteral("```\n\n```"));
+        QCOMPARE(editor->property("fenceCursor").toInt(), 3);
+        QCOMPARE(editor->property("imageText").toString(), QStringLiteral("![Cat](cat.png)"));
+        QCOMPARE(editor->property("imageSelStart").toInt(), 2);
+        QCOMPARE(editor->property("imageSelEnd").toInt(), 5);
+        QCOMPARE(editor->property("dateText").toString(), QStringLiteral("2026-08-31"));
+        QCOMPARE(editor->property("relativeImage").toString(), QStringLiteral("img/cat.png"));
+        QVERIFY(editor->property("movedInTable").toBool());
+        QCOMPARE(editor->property("nextCellStart").toInt(), 6);
+        QCOMPARE(editor->property("dividerText").toString(), QStringLiteral("---\n"));
+        QCOMPARE(editor->property("dividerCursor").toInt(), 4);
+        QCOMPARE(editor->property("dividerMidText").toString(),
+                 QStringLiteral("hello\n\n---\n\nworld"));
+        QCOMPARE(editor->property("dividerMidCursor").toInt(), 11);
+        QCOMPARE(editor->property("escapedImage").toString(),
+                 QStringLiteral("![Cat \\[1\\]](<photo (2).png>)"));
+        QVERIFY(editor->property("oneColumnMoved").toBool());
+        QCOMPARE(editor->property("oneColumnCursor").toInt(), 16);
+    }
+
+    void insertPaletteOpensOnCtrlTab() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+        QVERIFY(QMetaObject::invokeMethod(editor, "forceActiveFocus"));
+
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
+        QVERIFY(quickWindow);
+        QTest::keyClick(quickWindow, Qt::Key_Tab, Qt::ControlModifier);
+        QTRY_COMPARE(window->property("insertPaletteOpened").toBool(), true);
+
+        QObject *palette = window->findChild<QObject *>(QStringLiteral("insertPalette"));
+        QVERIFY(palette);
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "applyInsertKind",
+                                          Q_ARG(QVariant, QVariant(QStringLiteral("heading1"))),
+                                          Q_ARG(QVariant, QVariantMap())));
+        QTRY_COMPARE(editor->property("text").toString(), QStringLiteral("# "));
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "closeInsertPalette"));
+
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "openInsertPalette"));
+        QTRY_COMPARE(window->property("insertPaletteOpened").toBool(), true);
+        QTest::keyClick(quickWindow, Qt::Key_Escape);
+        QTRY_COMPARE(window->property("insertPaletteOpened").toBool(), false);
+        QTRY_VERIFY(editor->property("activeFocus").toBool());
+    }
+
+    void highlightsTablesTasksAndFences() {
+        QTextDocument document;
+        document.setPlainText(QStringLiteral(
+            "| A | B |\n"
+            "| --- | --- |\n"
+            "| 1 | 2 |\n"
+            "\n"
+            "- [ ] task\n"
+            "\n"
+            "```\n"
+            "code\n"
+            "```\n"));
+        MarkdownHighlighter highlighter(&document);
+        highlighter.rehighlight();
+
+        const auto formatAt = [&document](int position) {
+            const QTextBlock block = document.findBlock(position);
+            const int local = position - block.position();
+            QTextCharFormat format;
+            const auto ranges = block.layout()->formats();
+            for (const QTextLayout::FormatRange &range : ranges) {
+                if (local >= range.start && local < range.start + range.length)
+                    format = range.format;
+            }
+            return format;
+        };
+
+        QVERIFY(formatAt(2).fontWeight() >= QFont::Bold);
+        QCOMPARE(formatAt(0).foreground().color(), QColor(QStringLiteral("#4f525a")));
+
+        const int taskBox = document.toPlainText().indexOf(QStringLiteral("[ ]"));
+        QVERIFY(taskBox >= 0);
+        QCOMPARE(formatAt(taskBox).foreground().color(),
+                 QColor(QStringLiteral("#4f525a")));
+
+        const int codePos = document.toPlainText().indexOf(QStringLiteral("code"));
+        QVERIFY(codePos >= 0);
+        QVERIFY(formatAt(codePos).background().style() != Qt::NoBrush);
+    }
+
+    void tabMovesBetweenTableCells() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+        editor->setProperty("text", QStringLiteral("|  |  |\n| --- | --- |\n|  |  |"));
+        editor->setProperty("cursorPosition", 2);
+        QVERIFY(QMetaObject::invokeMethod(editor, "forceActiveFocus"));
+
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
+        QVERIFY(quickWindow);
+        QTest::keyClick(quickWindow, Qt::Key_Tab);
+        QCOMPARE(editor->property("cursorPosition").toInt(), 6);
     }
 
     void savesAndOpensFromFooterButtons() {

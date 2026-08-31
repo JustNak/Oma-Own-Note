@@ -40,6 +40,7 @@ private:
     void highlightMarkers(const QString &text);
     void highlightInline(const QString &text);
     void highlightSearch(const QString &text);
+    void highlightTable(const QString &text);
 
     bool m_darkMode = true;
     QString m_customBackground;

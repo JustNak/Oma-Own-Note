@@ -3,6 +3,7 @@
 #include <QColor>
 #include <QFont>
 #include <QFontMetricsF>
+#include <QTextBlock>
 #include <QTextDocument>
 
 MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
@@ -104,10 +105,28 @@ void MarkdownHighlighter::rebuildFormats() {
 }
 
 void MarkdownHighlighter::highlightBlock(const QString &text) {
+    constexpr int fenceState = 1;
+    const bool inFence = previousBlockState() == fenceState;
+    const QString trimmed = text.trimmed();
+    if (trimmed.startsWith(QLatin1String("```"))) {
+        setFormat(0, text.length(), m_markerFormat);
+        setCurrentBlockState(inFence ? 0 : fenceState);
+        highlightSearch(text);
+        return;
+    }
+    if (inFence) {
+        setFormat(0, text.length(), m_codeFormat);
+        setCurrentBlockState(fenceState);
+        highlightSearch(text);
+        return;
+    }
+
+    setCurrentBlockState(0);
     if (!text.isEmpty()) {
         highlightMarkers(text);
+        highlightTable(text);
         if (text.contains(QLatin1Char('`')) || text.contains(QLatin1Char('*'))
-            || text.contains(QLatin1Char('_')) || text.contains(QLatin1Char('['))) {
+                || text.contains(QLatin1Char('_')) || text.contains(QLatin1Char('['))) {
             highlightInline(text);
         }
     }
@@ -164,8 +183,13 @@ void MarkdownHighlighter::highlightMarkers(const QString &text) {
         static const QRegularExpression listRe(
             QStringLiteral("^(\\s*(?:[-+*]|\\d+[.)])\\s+)(.*)$"));
         const QRegularExpressionMatch list = listRe.match(text);
-        if (list.hasMatch())
+        if (list.hasMatch()) {
             setFormat(0, list.capturedLength(1), m_markerFormat);
+            static const QRegularExpression taskMark(QStringLiteral("^\\[[ xX]\\]"));
+            const QRegularExpressionMatch task = taskMark.match(list.captured(2));
+            if (task.hasMatch())
+                setFormat(list.capturedStart(2), task.capturedLength(), m_markerFormat);
+        }
     }
 
     if (firstChar == QLatin1Char('-') || firstChar == QLatin1Char('*')
@@ -174,6 +198,53 @@ void MarkdownHighlighter::highlightMarkers(const QString &text) {
         const QRegularExpressionMatch rule = ruleRe.match(text);
         if (rule.hasMatch())
             setFormat(0, text.length(), m_markerFormat);
+    }
+}
+
+static bool isPipeTableLine(const QString &text) {
+    const QString trimmed = text.trimmed();
+    return trimmed.startsWith(QLatin1Char('|')) && trimmed.indexOf(QLatin1Char('|'), 1) >= 0;
+}
+
+static bool isPipeSeparatorLine(const QString &text) {
+    const QString trimmed = text.trimmed();
+    if (!isPipeTableLine(trimmed))
+        return false;
+
+    bool sawDash = false;
+    for (const QChar character : trimmed) {
+        if (character == QLatin1Char('-')) {
+            sawDash = true;
+            continue;
+        }
+        if (character != QLatin1Char('|') && character != QLatin1Char(':')
+                && character != QLatin1Char(' ') && character != QLatin1Char('\t'))
+            return false;
+    }
+    return sawDash;
+}
+
+void MarkdownHighlighter::highlightTable(const QString &text) {
+    if (!isPipeTableLine(text))
+        return;
+
+    const bool separator = isPipeSeparatorLine(text);
+    const QTextBlock next = currentBlock().next();
+    const bool header = !separator && next.isValid() && isPipeSeparatorLine(next.text());
+
+    int cellStart = 0;
+    for (int i = 0; i <= text.length(); ++i) {
+        if (i == text.length() || text.at(i) == QLatin1Char('|')) {
+            if (i > cellStart) {
+                if (separator)
+                    setFormat(cellStart, i - cellStart, m_markerFormat);
+                else if (header)
+                    setFormat(cellStart, i - cellStart, m_headingFormat);
+            }
+            if (i < text.length())
+                setFormat(i, 1, m_markerFormat);
+            cellStart = i + 1;
+        }
     }
 }
 

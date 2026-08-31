@@ -39,6 +39,7 @@ ApplicationWindow {
     property string pendingAction: ""
     property bool replaceOpen: false
     property bool awaitingPendingSave: false
+    readonly property bool insertPaletteOpened: insertPalette.opened
 
     Material.theme: darkMode ? Material.Dark : Material.Light
     Material.accent: backend.themeAccent
@@ -156,6 +157,36 @@ ApplicationWindow {
         editor.forceActiveFocus();
     }
 
+    function openInsertPalette() {
+        editor.forceActiveFocus();
+        var caret = editor.cursorRectangle;
+        var overlay = Overlay.overlay;
+        var topLeft = editor.mapToItem(overlay, caret.x, caret.y);
+        var bottomLeft = editor.mapToItem(overlay, caret.x, caret.y + caret.height);
+        insertPalette.containerWidth = overlay.width;
+        insertPalette.containerHeight = overlay.height;
+        insertPalette.openAt(topLeft.x, topLeft.y, bottomLeft.y);
+    }
+
+    function closeInsertPalette() {
+        if (insertPalette.opened)
+            insertPalette.close();
+    }
+
+    function applyInsertKind(kind, options) {
+        if (kind === "image") {
+            imageFileDialog.open();
+            return;
+        }
+        if (kind === "link") {
+            editor.insertLink();
+            editor.forceActiveFocus();
+            return;
+        }
+        EditorMutations.applyInsert(editor, kind, options || {});
+        editor.forceActiveFocus();
+    }
+
     Shortcut {
         sequence: "Ctrl+S"
         context: Qt.ApplicationShortcut
@@ -189,6 +220,17 @@ ApplicationWindow {
         sequence: "Ctrl+K"
         context: Qt.WindowShortcut
         onActivated: editor.insertLink()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Tab"
+        context: Qt.WindowShortcut
+        onActivated: {
+            if (insertPalette.opened)
+                win.closeInsertPalette();
+            else
+                win.openInsertPalette();
+        }
     }
 
     Shortcut {
@@ -348,6 +390,38 @@ ApplicationWindow {
         onCancelRequested: win.pendingAction = ""
     }
 
+    InsertPalette {
+        id: insertPalette
+        parent: Overlay.overlay
+        darkMode: win.darkMode
+        textScale: win.textScale
+        textColor: win.textColor
+        strongTextColor: win.strongTextColor
+        mutedColor: win.mutedColor
+        selectionFill: win.selectionFill
+        accentColor: backend.themeAccent
+        containerWidth: win.width
+        containerHeight: win.height
+        onTriggered: function(kind, options) {
+            win.applyInsertKind(kind, options);
+        }
+        onCancelled: Qt.callLater(function() { editor.forceActiveFocus(); })
+    }
+
+    Dialogs.FileDialog {
+        id: imageFileDialog
+        title: "Insert Image"
+        fileMode: Dialogs.FileDialog.OpenFile
+        nameFilters: ["Images (*.png *.jpg *.jpeg *.gif *.webp *.svg *.bmp)", "All files (*)"]
+        onAccepted: {
+            var path = EditorMutations.relativeImagePath(backend.fileUrl, selectedFile);
+            var alt = EditorMutations.imageAltFromPath(path);
+            EditorMutations.applyInsert(editor, "image", { alt: alt, path: path });
+            editor.forceActiveFocus();
+        }
+        onRejected: editor.forceActiveFocus()
+    }
+
     ExternalChangeDialog {
         id: externalChangeDialog
         darkMode: win.darkMode
@@ -368,7 +442,7 @@ ApplicationWindow {
         standardButtons: Dialog.Close
         anchors.centerIn: parent
         contentItem: Label {
-            text: "Ctrl+S  Save\nCtrl+Shift+S  Save As\nCtrl+O  Open\nCtrl+N  New Window\nCtrl+F  Find\nCtrl+H  Find and Replace\nCtrl+B  Bold\nCtrl+I  Italic\nCtrl+K  Link\nCtrl+P  Print\nCtrl+=  Zoom In\nCtrl+-  Zoom Out\nCtrl+0  Reset Zoom\nF11 / Super+F  Fullscreen\nCtrl+?  Shortcuts"
+            text: "Ctrl+S  Save\nCtrl+Shift+S  Save As\nCtrl+O  Open\nCtrl+N  New Window\nCtrl+F  Find\nCtrl+H  Find and Replace\nCtrl+Tab  Insert\nCtrl+B  Bold\nCtrl+I  Italic\nCtrl+K  Link\nCtrl+P  Print\nCtrl+=  Zoom In\nCtrl+-  Zoom Out\nCtrl+0  Reset Zoom\nF11 / Super+F  Fullscreen\nCtrl+?  Shortcuts"
             lineHeight: 1.5
         }
     }
@@ -847,6 +921,12 @@ ApplicationWindow {
                                && (event.key === Qt.Key_PageDown || event.key === Qt.Key_PageUp)) {
                         movePage(event.key === Qt.Key_PageDown ? 1 : -1,
                                  event.modifiers & Qt.ShiftModifier);
+                        event.accepted = true;
+                    } else if (!commandModifier
+                               && (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)
+                               && EditorMutations.moveTableCell(
+                                   editor, event.key === Qt.Key_Backtab
+                                       || (event.modifiers & Qt.ShiftModifier) ? -1 : 1)) {
                         event.accepted = true;
                     }
                 }
