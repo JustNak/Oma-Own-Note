@@ -582,19 +582,26 @@ ApplicationWindow {
                 onWheel: function(wheel) {
                     scrollLinger.restart();
                     var shift = (wheel.modifiers & Qt.ShiftModifier) !== 0;
-                    if (wheel.pixelDelta.x !== 0)
-                        editorFlick.scrollToX(editorFlick.clampContentX(
-                            editorFlick.contentX - wheel.pixelDelta.x));
-                    if (shift && wheel.pixelDelta.y !== 0 && wheel.pixelDelta.x === 0)
-                        editorFlick.scrollToX(editorFlick.clampContentX(
-                            editorFlick.contentX - wheel.pixelDelta.y));
-                    else if (wheel.pixelDelta.y !== 0)
-                        editorFlick.scrollTo(editorFlick.clampContentY(
-                            editorFlick.contentY - wheel.pixelDelta.y));
-                    else if (shift || wheel.angleDelta.x !== 0)
+                    var pixelX = wheel.pixelDelta.x;
+                    var pixelY = wheel.pixelDelta.y;
+                    // Pixel and angle deltas are mutually exclusive. Trackpads
+                    // often set both; applying pixelDelta.x then falling through
+                    // to angleDelta would pan twice.
+                    if (pixelX !== 0 || pixelY !== 0) {
+                        if (pixelX !== 0)
+                            editorFlick.scrollToX(editorFlick.clampContentX(
+                                editorFlick.contentX - pixelX));
+                        if (shift && pixelY !== 0 && pixelX === 0)
+                            editorFlick.scrollToX(editorFlick.clampContentX(
+                                editorFlick.contentX - pixelY));
+                        else if (pixelY !== 0)
+                            editorFlick.scrollTo(editorFlick.clampContentY(
+                                editorFlick.contentY - pixelY));
+                    } else if (shift || wheel.angleDelta.x !== 0) {
                         editorFlick.scrollByWheelX(wheel);
-                    else
+                    } else {
                         editorFlick.scrollByWheel(wheel);
+                    }
                     wheel.accepted = true;
                 }
             }
