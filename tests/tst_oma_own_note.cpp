@@ -1,12 +1,15 @@
 #include <QtTest>
 #include <QColor>
 #include <QFont>
+#include <QFontMetricsF>
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QTextBlock>
+#include <QTextBlockFormat>
+#include <QTextCursor>
 #include <QTextDocument>
 #include <QTextLayout>
 
@@ -324,7 +327,18 @@ private slots:
         };
 
         QVERIFY(formatAt(2).fontWeight() >= QFont::Bold);
-        QCOMPARE(formatAt(0).fontPointSize(), 1.0);
+        QVERIFY(formatAt(2).background().style() != Qt::NoBrush);
+        QVERIFY(qFuzzyIsNull(formatAt(0).fontPointSize()) || formatAt(0).fontPointSize() > 8);
+        QCOMPARE(formatAt(0).foreground().color(), QColor(QStringLiteral("#4f525a")));
+
+        const int bodyDigit = document.toPlainText().indexOf(QLatin1Char('1'));
+        QVERIFY(bodyDigit >= 0);
+        QVERIFY(formatAt(bodyDigit).background().style() != Qt::NoBrush);
+
+        const int separatorDash = document.toPlainText().indexOf(QStringLiteral("---"));
+        QVERIFY(separatorDash >= 0);
+        QCOMPARE(formatAt(separatorDash).background().color(),
+                 QColor(QStringLiteral("#4f525a")));
 
         const int taskBox = document.toPlainText().indexOf(QStringLiteral("[ ]"));
         QVERIFY(taskBox >= 0);
@@ -334,6 +348,98 @@ private slots:
         const int codePos = document.toPlainText().indexOf(QStringLiteral("code"));
         QVERIFY(codePos >= 0);
         QVERIFY(formatAt(codePos).background().style() != Qt::NoBrush);
+    }
+
+    void tableGridKeepsColumnGutters() {
+        QTextDocument document;
+        QFont font(QStringLiteral("monospace"));
+        font.setStyleHint(QFont::Monospace);
+        font.setFixedPitch(true);
+        font.setPixelSize(16);
+        document.setDefaultFont(font);
+        document.setPlainText(QStringLiteral(
+            "| asd | asd | asd |\n"
+            "| --- | --- | --- |\n"
+            "|     |     |     |\n"));
+        document.setTextWidth(2000);
+
+        MarkdownHighlighter highlighter(&document);
+        highlighter.setColors(QStringLiteral("#1a2744"), QStringLiteral("#eeeeee"),
+                              QStringLiteral("#5584aa"));
+        highlighter.rehighlight();
+
+        QTextCursor cursor(&document);
+        for (QTextBlock block = document.begin(); block.isValid(); block = block.next()) {
+            QTextBlockFormat format = block.blockFormat();
+            if (MarkdownHighlighter::isTableSeparator(block.text())) {
+                format.setLineHeight(MarkdownHighlighter::tableSeparatorLineHeight,
+                                     QTextBlockFormat::FixedHeight);
+            } else {
+                format.setLineHeight(140, QTextBlockFormat::ProportionalHeight);
+            }
+            cursor.setPosition(block.position());
+            cursor.setBlockFormat(format);
+        }
+
+        const auto formatAt = [&document](int position) {
+            const QTextBlock block = document.findBlock(position);
+            const int local = position - block.position();
+            QTextCharFormat format;
+            const auto ranges = block.layout()->formats();
+            for (const QTextLayout::FormatRange &range : ranges) {
+                if (local >= range.start && local < range.start + range.length)
+                    format = range.format;
+            }
+            return format;
+        };
+
+        const QTextBlock header = document.begin();
+        QVERIFY(header.isValid());
+        QVERIFY(header.layout());
+        QVERIFY(header.layout()->lineCount() > 0);
+        const QTextLine headerLine = header.layout()->lineAt(0);
+        const qreal pipeWidth = headerLine.cursorToX(1) - headerLine.cursorToX(0);
+        const qreal em = QFontMetricsF(font).horizontalAdvance(QLatin1Char('|'));
+        QVERIFY2(pipeWidth > em * 0.6,
+                 qPrintable(QStringLiteral("pipe width %1 vs em %2")
+                                .arg(pipeWidth).arg(em)));
+        QVERIFY(qFuzzyIsNull(formatAt(0).fontPointSize()) || formatAt(0).fontPointSize() > 8);
+
+        const QColor headerFill = formatAt(2).background().color();
+        QVERIFY(headerFill.isValid());
+        QVERIFY(headerFill != QColor(QStringLiteral("#1c1c1a")));
+        QCOMPARE(formatAt(0).background().style(), Qt::NoBrush);
+
+        const QString headerText = header.text();
+        int firstAsd = headerText.indexOf(QStringLiteral("asd"));
+        int secondAsd = headerText.indexOf(QStringLiteral("asd"), firstAsd + 3);
+        QVERIFY(firstAsd >= 0);
+        QVERIFY(secondAsd > firstAsd);
+        const int gutterPipe = headerText.indexOf(QLatin1Char('|'), firstAsd);
+        QVERIFY(gutterPipe > firstAsd);
+        QVERIFY(gutterPipe < secondAsd);
+        QCOMPARE(formatAt(header.position() + gutterPipe).foreground().color(),
+                 QColor(QStringLiteral("#4f525a")));
+
+        const QTextBlock separator = header.next();
+        QVERIFY(separator.isValid());
+        QCOMPARE(int(separator.blockFormat().lineHeightType()),
+                 int(QTextBlockFormat::FixedHeight));
+        QCOMPARE(separator.blockFormat().lineHeight(),
+                 MarkdownHighlighter::tableSeparatorLineHeight);
+
+        const QTextBlock body = separator.next();
+        QVERIFY(body.isValid());
+        QVERIFY(body.layout());
+        QVERIFY(body.layout()->lineCount() > 0);
+        const qreal headerWidth = headerLine.naturalTextWidth();
+        const qreal bodyWidth = body.layout()->lineAt(0).naturalTextWidth();
+        QVERIFY2(qAbs(headerWidth - bodyWidth) < em * 3,
+                 qPrintable(QStringLiteral("header %1 vs body %2")
+                                .arg(headerWidth).arg(bodyWidth)));
+
+        const auto parsed = MarkdownHighlighter::parseTableLine(headerText);
+        QCOMPARE(parsed.hidden.size(), 4);
     }
 
     void tabMovesBetweenTableCells() {

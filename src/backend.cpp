@@ -767,7 +767,8 @@ void Backend::scheduleWordCount() {
 static void applyBlockLineHeight(QTextCursor &cursor, const QTextBlock &block) {
     QTextBlockFormat format = block.blockFormat();
     if (MarkdownHighlighter::isTableSeparator(block.text()))
-        format.setLineHeight(2, QTextBlockFormat::FixedHeight);
+        format.setLineHeight(MarkdownHighlighter::tableSeparatorLineHeight,
+                             QTextBlockFormat::FixedHeight);
     else
         format.setLineHeight(typoraLineHeightPercent, QTextBlockFormat::ProportionalHeight);
     cursor.setPosition(block.position());

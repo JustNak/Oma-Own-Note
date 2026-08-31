@@ -103,15 +103,28 @@ void MarkdownHighlighter::rebuildFormats() {
     m_currentSearchFormat.setBackground(m_darkMode ? QColor(QStringLiteral("#b36b20"))
                                                    : QColor(QStringLiteral("#ffad42")));
 
-    const QColor headerFill = m_darkMode ? QColor(QStringLiteral("#1c1c1a"))
-                                         : QColor(QStringLiteral("#f4f4ea"));
+    const auto mixToward = [](const QColor &from, const QColor &to, qreal amount) {
+        return QColor::fromRgbF(from.redF() + (to.redF() - from.redF()) * amount,
+                                from.greenF() + (to.greenF() - from.greenF()) * amount,
+                                from.blueF() + (to.blueF() - from.blueF()) * amount,
+                                from.alphaF() + (to.alphaF() - from.alphaF()) * amount);
+    };
+
     m_tableHeaderFormat = QTextCharFormat();
     m_tableHeaderFormat.setForeground(text);
     m_tableHeaderFormat.setFontWeight(QFont::Bold);
-    m_tableHeaderFormat.setBackground(headerFill);
+    m_tableHeaderFormat.setBackground(mixToward(background, text, 0.14));
 
     m_tableBodyFormat = QTextCharFormat();
     m_tableBodyFormat.setForeground(text);
+    m_tableBodyFormat.setBackground(mixToward(background, text, 0.07));
+
+    m_tableRuleFormat = QTextCharFormat();
+    m_tableRuleFormat.setForeground(marker);
+
+    m_tableHairlineFormat = QTextCharFormat();
+    m_tableHairlineFormat.setForeground(marker);
+    m_tableHairlineFormat.setBackground(marker);
 }
 
 void MarkdownHighlighter::highlightBlock(const QString &text) {
@@ -260,21 +273,22 @@ void MarkdownHighlighter::highlightTable(const QString &text) {
     if (line.kind == TableLine::Kind::None)
         return;
 
-    if (line.kind != TableLine::Kind::Separator) {
-        const QTextBlock next = currentBlock().next();
-        if (next.isValid() && isTableSeparator(next.text()))
-            line.kind = TableLine::Kind::Header;
+    if (line.kind == TableLine::Kind::Separator) {
+        setFormat(0, text.length(), m_tableHairlineFormat);
+        return;
     }
+
+    const QTextBlock next = currentBlock().next();
+    if (next.isValid() && isTableSeparator(next.text()))
+        line.kind = TableLine::Kind::Header;
 
     const QTextCharFormat &cellFormat = line.kind == TableLine::Kind::Header
         ? m_tableHeaderFormat
         : m_tableBodyFormat;
-    if (line.kind != TableLine::Kind::Separator) {
-        for (const Span &cell : line.cells)
-            setFormat(cell.start, cell.length, cellFormat);
-    }
+    for (const Span &cell : line.cells)
+        setFormat(cell.start, cell.length, cellFormat);
     for (const Span &hidden : line.hidden)
-        setFormat(hidden.start, hidden.length, m_hiddenMarkerFormat);
+        setFormat(hidden.start, hidden.length, m_tableRuleFormat);
 }
 
 void MarkdownHighlighter::highlightInline(const QString &text) {

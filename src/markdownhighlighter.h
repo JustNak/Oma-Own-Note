@@ -44,6 +44,8 @@ public:
     static bool isTableSeparator(const QString &text);
     static TableLine parseTableLine(const QString &text);
 
+    static constexpr qreal tableSeparatorLineHeight = 3;
+
 protected:
     void highlightBlock(const QString &text) override;
 
@@ -72,4 +74,6 @@ private:
     QTextCharFormat m_currentSearchFormat;
     QTextCharFormat m_tableHeaderFormat;
     QTextCharFormat m_tableBodyFormat;
+    QTextCharFormat m_tableRuleFormat;
+    QTextCharFormat m_tableHairlineFormat;
 };
