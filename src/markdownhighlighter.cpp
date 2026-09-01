@@ -1,5 +1,6 @@
 #include "markdownhighlighter.h"
 
+#include <QAbstractTextDocumentLayout>
 #include <QColor>
 #include <QFont>
 #include <QFontMetricsF>
@@ -39,6 +40,12 @@ void MarkdownHighlighter::setSearch(const QString &query, int currentMatchStart)
     m_searchQuery = query;
     m_currentMatchStart = currentMatchStart;
     rehighlight();
+    // Table rows stay transparent, so rehighlight may not dirty the layout.
+    // TableChrome paints find matches and must repaint when the query changes.
+    if (QTextDocument *doc = document()) {
+        if (QAbstractTextDocumentLayout *layout = doc->documentLayout())
+            emit layout->update();
+    }
 }
 
 void MarkdownHighlighter::rebuildFormats() {

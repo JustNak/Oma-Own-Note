@@ -451,12 +451,11 @@ void TableChrome::paintCellText(QPainter *painter, const TableGeom &geom,
                 from += qMax(1, searchQuery.size());
             }
         }
+        painter->setPen(textColor);
         if (!ranges.isEmpty())
             cellLayout.draw(painter, origin, ranges);
-        else {
-            painter->setPen(textColor);
+        else
             cellLayout.draw(painter, origin);
-        }
     }
 }
 
