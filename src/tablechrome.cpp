@@ -399,11 +399,14 @@ static QVector<int> snapRowStrokes(const QTransform &world, qreal x,
 void TableChrome::paintCellText(QPainter *painter, const TableGeom &geom,
                                 const QFont &font, const QColor &textColor,
                                 const QColor &selectionColor, int selectionStart,
-                                int selectionEnd) {
+                                int selectionEnd, const QString &searchQuery,
+                                int currentMatchStart, const QColor &searchColor,
+                                const QColor &currentSearchColor) {
     QFont headerFont = font;
     headerFont.setBold(true);
     const int selFrom = qMin(selectionStart, selectionEnd);
     const int selTo = qMax(selectionStart, selectionEnd);
+    const bool searching = !searchQuery.isEmpty() && searchColor.isValid();
 
     for (const CellGeom &cell : geom.cells) {
         if (cell.text.isEmpty() && selFrom == selTo)
@@ -417,25 +420,43 @@ void TableChrome::paintCellText(QPainter *painter, const TableGeom &geom,
         const qreal yOff = qMax(qreal(0), (cell.textRect.height() - layoutHeight) * 0.5);
         const QPointF origin(cell.textRect.left(), cell.textRect.top() + yOff);
 
+        QList<QTextLayout::FormatRange> ranges;
         if (selTo > selFrom) {
             const int absStart = cell.blockPosition + cell.contentStart;
             const int absEnd = cell.blockPosition + cell.contentEnd;
             const int overlapStart = qMax(selFrom, absStart);
             const int overlapEnd = qMin(selTo, absEnd);
             if (overlapEnd > overlapStart) {
-                QList<QTextLayout::FormatRange> ranges;
                 QTextLayout::FormatRange range;
                 range.start = overlapStart - absStart;
                 range.length = overlapEnd - overlapStart;
                 range.format.setBackground(selectionColor);
                 range.format.setForeground(textColor);
                 ranges.append(range);
-                cellLayout.draw(painter, origin, ranges);
-                continue;
             }
         }
-        painter->setPen(textColor);
-        cellLayout.draw(painter, origin);
+        if (searching) {
+            int from = 0;
+            while ((from = cell.text.indexOf(searchQuery, from, Qt::CaseInsensitive)) >= 0) {
+                QTextLayout::FormatRange range;
+                range.start = from;
+                range.length = searchQuery.size();
+                const int absStart = cell.blockPosition + cell.contentStart + from;
+                const QColor fill = (currentMatchStart >= 0 && absStart == currentMatchStart
+                                     && currentSearchColor.isValid())
+                    ? currentSearchColor : searchColor;
+                range.format.setBackground(fill);
+                range.format.setForeground(textColor);
+                ranges.append(range);
+                from += qMax(1, searchQuery.size());
+            }
+        }
+        if (!ranges.isEmpty())
+            cellLayout.draw(painter, origin, ranges);
+        else {
+            painter->setPen(textColor);
+            cellLayout.draw(painter, origin);
+        }
     }
 }
 
@@ -459,6 +480,16 @@ void TableChrome::paintTables(QPainter *painter, QTextDocument *document,
 
     const QTransform world = painter->combinedTransform();
     const QFont font = document->defaultFont();
+    QString searchQuery;
+    int currentMatchStart = -1;
+    QColor searchColor;
+    QColor currentSearchColor;
+    if (auto *highlighter = document->findChild<MarkdownHighlighter *>()) {
+        searchQuery = highlighter->searchQuery();
+        currentMatchStart = highlighter->currentMatchStart();
+        searchColor = highlighter->searchBackground();
+        currentSearchColor = highlighter->currentSearchBackground();
+    }
 
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing, false);
@@ -467,7 +498,8 @@ void TableChrome::paintTables(QPainter *painter, QTextDocument *document,
         painter->save();
         painter->setTransform(world);
         paintCellText(painter, geom, font, text, selectionColor,
-                      selectionStart, selectionEnd);
+                      selectionStart, selectionEnd, searchQuery, currentMatchStart,
+                      searchColor, currentSearchColor);
         painter->restore();
     }
 
@@ -660,6 +692,24 @@ const TableChrome::CellGeom *TableChrome::cellAtPosition(int position) const {
             const int end = cell.blockPosition + cell.contentEnd;
             if (position >= start && position <= end)
                 return &cell;
+        }
+    }
+    if (!m_document)
+        return nullptr;
+
+    const QTextBlock block = m_document->findBlock(position);
+    if (!block.isValid()
+            || position < block.position()
+            || position >= block.position() + block.length())
+        return nullptr;
+
+    const int blockPosition = block.position();
+    for (const TableGeom &table : m_tables) {
+        for (const CellGeom &cell : table.cells) {
+            if (cell.blockPosition != blockPosition)
+                continue;
+            const int start = cell.blockPosition + cell.contentStart;
+            const int end = cell.blockPosition + cell.contentEnd;
             const int distance = position < start ? start - position : position - end;
             if (distance < bestDistance) {
                 bestDistance = distance;
@@ -786,7 +836,7 @@ bool TableChrome::positionInTable(int position) const {
             if (!block.isValid())
                 continue;
             if (position >= block.position()
-                    && position <= block.position() + block.length())
+                    && position < block.position() + block.length())
                 return true;
         }
     }

@@ -143,7 +143,11 @@ private:
     static void paintCellText(QPainter *painter, const TableGeom &geom,
                               const QFont &font, const QColor &textColor,
                               const QColor &selectionColor,
-                              int selectionStart, int selectionEnd);
+                              int selectionStart, int selectionEnd,
+                              const QString &searchQuery = QString(),
+                              int currentMatchStart = -1,
+                              const QColor &searchColor = QColor(),
+                              const QColor &currentSearchColor = QColor());
 
     QPointer<QObject> m_textDocumentObject;
     QPointer<QTextDocument> m_document;

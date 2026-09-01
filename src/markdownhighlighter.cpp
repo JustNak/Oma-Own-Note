@@ -252,9 +252,12 @@ MarkdownHighlighter::TableLine MarkdownHighlighter::parseTableLine(const QString
     int cellStart = 0;
     for (int i = 0; i <= text.length(); ++i) {
         if (i == text.length() || text.at(i) == QLatin1Char('|')) {
-            if (i > cellStart)
+            const bool atPipe = i < text.length();
+            // Keep zero-width cells (`||`) so overlay columns match the
+            // source grid. Skip only the implicit span before a leading pipe.
+            if (i > cellStart || (atPipe && cellStart > 0))
                 line.cells.append(Span{cellStart, i - cellStart});
-            if (i < text.length())
+            if (atPipe)
                 line.hidden.append(Span{i, 1});
             cellStart = i + 1;
         }

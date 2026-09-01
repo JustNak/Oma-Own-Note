@@ -1088,15 +1088,17 @@ ApplicationWindow {
                             event.accepted = true;
                             return;
                         }
-                        if (!(event.modifiers & Qt.ShiftModifier)
-                                && event.key === Qt.Key_Right) {
-                            EditorMutations.moveInsideTable(editor, 1);
-                            event.accepted = true;
-                            return;
-                        }
-                        if (!(event.modifiers & Qt.ShiftModifier)
-                                && event.key === Qt.Key_Left) {
-                            EditorMutations.moveInsideTable(editor, -1);
+                        if (event.key === Qt.Key_Right || event.key === Qt.Key_Left) {
+                            var tableStep = event.key === Qt.Key_Right ? 1 : -1;
+                            var nextPos = EditorMutations.nextInsideTablePosition(
+                                editor.text, editor.cursorPosition, tableStep);
+                            if (nextPos >= 0) {
+                                if (event.modifiers & Qt.ShiftModifier)
+                                    editor.moveCursorSelection(
+                                        nextPos, TextEdit.SelectCharacters);
+                                else
+                                    EditorMutations.moveInsideTable(editor, tableStep);
+                            }
                             event.accepted = true;
                             return;
                         }

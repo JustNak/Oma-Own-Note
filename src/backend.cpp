@@ -834,14 +834,18 @@ void Backend::restretchTableTypography() {
     if (!m_document)
         return;
 
+    // Wrap-width restretch is not a user edit. Do not join the previous
+    // typing command (that made undo revert text and restore stale heights).
+    const bool wasModified = m_document->isModified();
     m_formattingTypography = true;
     QTextCursor cursor(m_document);
-    cursor.joinPreviousEditBlock();
+    cursor.beginEditBlock();
     const QHash<int, qreal> heights = TableChrome::dataRowHeights(m_document, m_tableWrapWidth);
     for (QTextBlock block = m_document->begin(); block.isValid(); block = block.next())
         applyBlockLineHeight(cursor, block, heights);
     cursor.endEditBlock();
     m_formattingTypography = false;
+    m_document->setModified(wasModified);
 }
 
 void Backend::applyDocumentTypography() {

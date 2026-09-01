@@ -223,6 +223,10 @@ private slots:
         QCOMPARE(editor->property("confinedOutsideLine").toString().count(QLatin1Char('|')), 3);
         QVERIFY(editor->property("confinedOutsideLine").toString().contains(QLatin1Char('x')));
         QVERIFY(editor->property("tableReturnKeptRows").toBool());
+        QVERIFY(editor->property("arrowKeptRagged").toBool());
+        const int skipPipe = editor->property("skipPipePosition").toInt();
+        QVERIFY(skipPipe > 4);
+        QCOMPARE(editor->property("text").toString().at(skipPipe), QLatin1Char('b'));
     }
 
     void insertPaletteOpensOnCtrlTab() {
@@ -1031,6 +1035,76 @@ private slots:
         QVERIFY2(headerH > bodyH + 4,
                  qPrintable(QStringLiteral("header %1 body %2")
                             .arg(headerH).arg(bodyH)));
+    }
+
+    void parseTableLineKeepsEmptyCells() {
+        const auto parsed = MarkdownHighlighter::parseTableLine(
+            QStringLiteral("| a || b |"));
+        QCOMPARE(parsed.cells.size(), 3);
+        QCOMPARE(parsed.cells.at(1).length, 0);
+
+        QTextDocument document;
+        QFont font(QStringLiteral("monospace"));
+        font.setStyleHint(QFont::Monospace);
+        font.setFixedPitch(true);
+        font.setPixelSize(16);
+        document.setDefaultFont(font);
+        document.setPlainText(QStringLiteral("| a || b |\n| --- | --- |\n| c || d |\n"));
+        document.setTextWidth(2000);
+        const auto tables = TableChrome::collectTables(&document, 2000);
+        QCOMPARE(tables.size(), 1);
+        QCOMPARE(tables.first().columns.size(), 4);
+    }
+
+    void tableChromeIgnoresCaretOutsideTable() {
+        QTextDocument document;
+        document.setPlainText(QStringLiteral(
+            "hello\n\n| a | b |\n| --- | --- |\n| c | d |\n\nmore\n"));
+        document.setTextWidth(400);
+        TableChrome chrome;
+        chrome.setTextDocument(&document);
+        chrome.setWrapWidth(400);
+
+        QVERIFY(!chrome.positionInTable(0));
+        QCOMPARE(chrome.movePositionVertically(0, 1), -1);
+        const int more = document.toPlainText().indexOf(QStringLiteral("more"));
+        QVERIFY(more >= 0);
+        QVERIFY(!chrome.positionInTable(more));
+        QVERIFY(chrome.caretRect(more).isEmpty());
+        QCOMPARE(chrome.movePositionVertically(more, -1), -1);
+        QVERIFY(chrome.positionInTable(document.toPlainText().indexOf(QLatin1Char('a'))));
+    }
+
+    void tableWrapWidthChangeKeepsTypingUndo() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+        const QString longCell(80, QLatin1Char('w'));
+        editor->setProperty("text",
+                            QStringLiteral("| ") + longCell
+                            + QStringLiteral(" | x |\n| --- | --- |\n| y | z |\n"));
+        editor->setProperty("cursorPosition", 2);
+        QVERIFY(QMetaObject::invokeMethod(editor, "forceActiveFocus"));
+
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
+        QVERIFY(quickWindow);
+        QTest::keyClick(quickWindow, Qt::Key_A);
+        QVERIFY(editor->property("text").toString().contains(QLatin1Char('a')));
+
+        backend.setTableWrapWidth(160);
+        QTest::keyClick(quickWindow, Qt::Key_Z, Qt::ControlModifier);
+        QVERIFY2(editor->property("text").toString().contains(QLatin1Char('a')),
+                 "wrap-width restretch must not consume the typing undo command");
     }
 
     void tableChromeTextureFollowsCanvasZoom() {

@@ -31,6 +31,8 @@ TextEdit {
     property bool confinedOutsideResult
     property string confinedOutsideLine
     property bool tableReturnKeptRows
+    property bool arrowKeptRagged
+    property int skipPipePosition
 
     Component.onCompleted: {
         text = "";
@@ -137,5 +139,15 @@ TextEdit {
                    return line.indexOf("|") === 0 && line.lastIndexOf("|") > 0;
                })
             && text.split("\n").length >= beforeReturn;
+
+        text = "| a | b |\n| - | --- |\n| longcell | x |";
+        var ragged = text;
+        cursorPosition = 2;
+        EditorMutations.moveInsideTable(this, 1);
+        arrowKeptRagged = text === ragged;
+
+        text = "| a | b |\n| --- | --- |\n|     |     |";
+        cursorPosition = 2;
+        skipPipePosition = EditorMutations.nextInsideTablePosition(text, 4, 1);
     }
 }
