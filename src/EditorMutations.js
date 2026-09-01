@@ -823,63 +823,6 @@ function alignTable(editor) {
     return true;
 }
 
-// Place the caret inside a freshly formatted table without selecting the cell,
-// keeping it `offset` characters into the target cell's trimmed content. Used
-// by the live reflow so typing keeps its natural insertion point.
-function placeCaretInCellAtOffset(editor, tableStart, formatted, rowIndex, cellIndex, offset) {
-    var base = tableStart;
-    var dataRow = 0;
-    var lines = formatted.split("\n");
-    for (var i = 0; i < lines.length; i++) {
-        if (isTableRow(lines[i]) && !isSeparatorRow(lines[i])) {
-            if (dataRow === rowIndex) {
-                var parsed = parseTableRow(lines[i]);
-                if (!parsed || parsed.cells.length === 0)
-                    return;
-                var index = Math.max(0, Math.min(cellIndex, parsed.cells.length - 1));
-                var content = cellContent(lines[i], parsed.cells[index]);
-                var contentLength = content.end - content.start;
-                var clamped = Math.max(0, Math.min(offset, contentLength));
-                editor.cursorPosition = base + content.start + clamped;
-                return;
-            }
-            dataRow++;
-        }
-        base += lines[i].length + 1;
-    }
-}
-
-// Keep the pipe table under the caret padded to uniform column widths while the
-// user types, so the visible pipes never drift away from the painted grid. This
-// runs on every edit; it is a no-op once the table is already aligned, which
-// also stops the re-entrant text change it triggers.
-function reflowTableAroundCaret(editor) {
-    if (editor.selectionStart !== editor.selectionEnd)
-        return false;
-    var text = editor.text;
-    var position = editor.cursorPosition;
-    var extent = tableExtent(text, position);
-    if (!extent)
-        return false;
-    var current = text.slice(extent.start, extent.end);
-    var formatted = prettyPrintTableText(current);
-    if (formatted === current)
-        return false;
-
-    // Only reflow while the caret sits in a data cell; leave the caret alone
-    // when it is on the separator row so nothing jumps unexpectedly.
-    var info = tableCellAt(text, position);
-    if (!info)
-        return false;
-    var rowIndex = dataRowIndexAt(text, extent.start, info.lineStart);
-    var offset = Math.max(0, position - (info.lineStart + info.contentStart));
-
-    replaceRange(editor, extent.start, extent.end, formatted);
-    placeCaretInCellAtOffset(editor, extent.start, formatted, rowIndex,
-                             info.cellIndex, offset);
-    return true;
-}
-
 function walkTableRow(text, fromPosition, direction) {
     var position = fromPosition;
     while (position >= 0 && position <= text.length) {
