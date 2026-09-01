@@ -695,9 +695,14 @@ ApplicationWindow {
             // bottom edge scrolls the page along with the text.
             function ensureCursorVisible() {
                 var margin = win.editorFontPixelSize * 2 * win.zoomFactor;
-                var cursorTop = toContentY(editor.cursorRectangle.y);
-                var cursorBottom = toContentY(editor.cursorRectangle.y
-                                              + editor.cursorRectangle.height);
+                var caret = editor.cursorRectangle;
+                if (tableChrome.positionInTable(editor.cursorPosition)) {
+                    var tableRect = tableChrome.caretRect(editor.cursorPosition);
+                    if (tableRect.height > 0)
+                        caret = tableRect;
+                }
+                var cursorTop = toContentY(caret.y);
+                var cursorBottom = toContentY(caret.y + caret.height);
                 var maxContentY = Math.max(0, contentHeight - height);
 
                 if (cursorBottom + margin > contentY + height)
@@ -705,9 +710,8 @@ ApplicationWindow {
                 else if (cursorTop - margin < contentY)
                     scrollTo(Math.max(0, cursorTop - margin));
 
-                var cursorLeft = toContentX(editor.cursorRectangle.x);
-                var cursorRight = toContentX(editor.cursorRectangle.x
-                                             + editor.cursorRectangle.width);
+                var cursorLeft = toContentX(caret.x);
+                var cursorRight = toContentX(caret.x + caret.width);
                 var maxContentX = Math.max(0, contentWidth - width);
                 if (cursorRight + margin > contentX + width)
                     scrollToX(Math.min(maxContentX, cursorRight + margin - width));
@@ -737,9 +741,63 @@ ApplicationWindow {
                 paper: win.pageColor
                 textColor: win.textColor
                 ruleColor: win.textColor
+                selectionColor: win.selectionFill
+                wrapWidth: editor.width
+                cursorPosition: editor.cursorPosition
+                selectionStart: Math.min(editor.selectionStart, editor.selectionEnd)
+                selectionEnd: Math.max(editor.selectionStart, editor.selectionEnd)
                 // Paint at the post-zoom pixel grid so Item.scale does not
                 // stretch 1px hairlines into fractional, uneven strokes.
                 viewScale: canvas.scale
+            }
+
+            Rectangle {
+                id: tableCaret
+                // layoutRevision is a dependency so wrap/column changes
+                // re-read caretRect even when the source offset is unchanged.
+                visible: editor.activeFocus
+                         && tableChrome.positionInTable(editor.cursorPosition)
+                         && overlayRect.height > 0
+                width: 1 / Math.max(canvas.scale, 0.01)
+                color: win.strongTextColor
+                x: editor.x + overlayRect.x
+                y: editor.y + overlayRect.y
+                height: overlayRect.height
+                z: 2
+                readonly property rect overlayRect: {
+                    var _rev = tableChrome.layoutRevision;
+                    return tableChrome.caretRect(editor.cursorPosition);
+                }
+            }
+
+            MouseArea {
+                anchors.fill: editor
+                z: 1
+                acceptedButtons: Qt.LeftButton
+                property int pressPos: -1
+                onPressed: function(mouse) {
+                    var pos = tableChrome.hitTest(mouse.x, mouse.y);
+                    if (pos < 0) {
+                        pressPos = -1;
+                        mouse.accepted = false;
+                        return;
+                    }
+                    editor.forceActiveFocus();
+                    pressPos = pos;
+                    if (mouse.modifiers & Qt.ShiftModifier)
+                        editor.select(Math.min(editor.cursorPosition, pos),
+                                      Math.max(editor.cursorPosition, pos));
+                    else
+                        editor.cursorPosition = pos;
+                    mouse.accepted = true;
+                }
+                onPositionChanged: function(mouse) {
+                    if (pressPos < 0 || !(mouse.buttons & Qt.LeftButton))
+                        return;
+                    var pos = tableChrome.hitTest(mouse.x, mouse.y);
+                    if (pos >= 0)
+                        editor.select(Math.min(pressPos, pos), Math.max(pressPos, pos));
+                }
             }
 
             TextEdit {
@@ -747,11 +805,9 @@ ApplicationWindow {
                 objectName: "sourceEditor"
                 x: 0
                 // Inverse of canvas.scale so wrap still fills the 65-character
-                // column after zoom. A table that cannot wrap grows the wrap
-                // width instead; the flickable then pans horizontally.
-                width: Math.max(
-                    Math.round(win.editorWidth / Math.max(win.zoomFactor, 0.01)),
-                    Math.ceil(tableChrome.naturalWidth))
+                // column after zoom. Tables wrap inside this column instead of
+                // growing the editor sideways.
+                width: Math.round(win.editorWidth / Math.max(win.zoomFactor, 0.01))
                 height: parent.height
                 text: ""
                 textFormat: TextEdit.PlainText
@@ -779,6 +835,7 @@ ApplicationWindow {
                 cursorDelegate: Rectangle {
                     width: 1 / Math.max(canvas.scale, 0.01)
                     color: win.strongTextColor
+                    visible: !tableChrome.positionInTable(editor.cursorPosition)
                 }
                 onCursorRectangleChanged: editorFlick.ensureCursorVisible()
 
@@ -943,6 +1000,15 @@ ApplicationWindow {
                 }
 
                 function moveCursorVertically(direction, extendSelection) {
+                    var tablePos = tableChrome.movePositionVertically(editor.cursorPosition,
+                                                                      direction);
+                    if (tablePos >= 0) {
+                        if (extendSelection)
+                            moveCursorSelection(tablePos, TextEdit.SelectCharacters);
+                        else
+                            cursorPosition = tablePos;
+                        return;
+                    }
                     var rect = cursorRectangle;
                     var step = Math.max(rect.height, 1);
                     var target = positionAt(rect.x, rect.y + rect.height / 2 + direction * step);
@@ -998,6 +1064,45 @@ ApplicationWindow {
 
                     var returnKey = event.key === Qt.Key_Return || event.key === Qt.Key_Enter;
                     var commandModifier = event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier);
+                    var inTable = EditorMutations.tableCellAt(editor.text, editor.cursorPosition)
+                        || EditorMutations.isSeparatorRow(
+                            EditorMutations.lineBounds(editor.text, editor.cursorPosition).line);
+                    if (inTable && !commandModifier) {
+                        EditorMutations.confineTableCaret(editor);
+                        if (returnKey) {
+                            EditorMutations.tableReturn(editor);
+                            event.accepted = true;
+                            return;
+                        }
+                        if (event.text === "|") {
+                            event.accepted = true;
+                            return;
+                        }
+                        if (event.key === Qt.Key_Backspace
+                                && EditorMutations.tableBackspace(editor)) {
+                            event.accepted = true;
+                            return;
+                        }
+                        if (event.key === Qt.Key_Delete
+                                && EditorMutations.tableDelete(editor)) {
+                            event.accepted = true;
+                            return;
+                        }
+                        if (event.key === Qt.Key_Right || event.key === Qt.Key_Left) {
+                            var tableStep = event.key === Qt.Key_Right ? 1 : -1;
+                            var nextPos = EditorMutations.nextInsideTablePosition(
+                                editor.text, editor.cursorPosition, tableStep);
+                            if (nextPos >= 0) {
+                                if (event.modifiers & Qt.ShiftModifier)
+                                    editor.moveCursorSelection(
+                                        nextPos, TextEdit.SelectCharacters);
+                                else
+                                    EditorMutations.moveInsideTable(editor, tableStep);
+                            }
+                            event.accepted = true;
+                            return;
+                        }
+                    }
                     if (returnKey && !commandModifier) {
                         smartReturn(event.modifiers & Qt.ShiftModifier);
                         event.accepted = true;
@@ -1050,10 +1155,17 @@ ApplicationWindow {
                     font.weight: editor.font.weight
                 }
 
+                onCursorPositionChanged: {
+                    if (tableChrome.positionInTable(cursorPosition))
+                        EditorMutations.confineTableCaret(editor);
+                }
+
                 Component.onCompleted: {
                     backend.attachDocument(textDocument);
+                    backend.tableWrapWidth = width;
                     forceActiveFocus();
                 }
+                onWidthChanged: backend.tableWrapWidth = width
             }
             }
         }

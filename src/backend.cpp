@@ -9,6 +9,7 @@
 #include <QDesktopServices>
 #include <QFont>
 #include <QGuiApplication>
+#include <QHash>
 #include <QMimeData>
 #include <QProcess>
 #include <QPrintDialog>
@@ -33,6 +34,7 @@
 #include <algorithm>
 
 #include "markdownhighlighter.h"
+#include "tablechrome.h"
 
 constexpr qreal typoraLineHeightPercent = 140;
 const QString lastSaveDirectorySetting = QStringLiteral("file/lastSaveDirectory");
@@ -790,7 +792,8 @@ static bool rangeNeedsTableTypography(QTextDocument *document, int position, int
     return false;
 }
 
-static void applyBlockLineHeight(QTextCursor &cursor, const QTextBlock &block) {
+static void applyBlockLineHeight(QTextCursor &cursor, const QTextBlock &block,
+                                 const QHash<int, qreal> &tableRowHeights) {
     QTextBlockFormat format = block.blockFormat();
     format.setTopMargin(0);
     format.setBottomMargin(0);
@@ -801,15 +804,48 @@ static void applyBlockLineHeight(QTextCursor &cursor, const QTextBlock &block) {
                              QTextBlockFormat::FixedHeight);
         format.setNonBreakableLines(true);
     } else if (MarkdownHighlighter::isTableRow(block.text())) {
-        format.setLineHeight(MarkdownHighlighter::tableDataRowLineHeight(font),
-                             QTextBlockFormat::MinimumHeight);
+        const qreal height = tableRowHeights.value(
+            block.position(), MarkdownHighlighter::tableDataRowLineHeight(font));
+        format.setLineHeight(height, QTextBlockFormat::MinimumHeight);
         format.setNonBreakableLines(true);
     } else {
         format.setLineHeight(typoraLineHeightPercent, QTextBlockFormat::ProportionalHeight);
         format.setNonBreakableLines(false);
     }
+    if (block.blockFormat().lineHeight() == format.lineHeight()
+            && block.blockFormat().lineHeightType() == format.lineHeightType()
+            && block.blockFormat().nonBreakableLines() == format.nonBreakableLines())
+        return;
     cursor.setPosition(block.position());
     cursor.setBlockFormat(format);
+}
+
+void Backend::setTableWrapWidth(qreal tableWrapWidth) {
+    const qreal next = qMax(tableWrapWidth, qreal(0));
+    if (qAbs(m_tableWrapWidth - next) < 0.5)
+        return;
+    m_tableWrapWidth = next;
+    emit tableWrapWidthChanged();
+    if (m_document && !m_loading)
+        restretchTableTypography();
+}
+
+void Backend::restretchTableTypography() {
+    if (!m_document)
+        return;
+
+    // Wrap-width restretch is not a user edit. Do not join the previous
+    // typing command (that made undo revert text and restore stale heights).
+    const bool wasModified = m_document->isModified();
+    m_formattingTypography = true;
+    QTextCursor cursor(m_document);
+    cursor.beginEditBlock();
+    const QHash<int, qreal> heights = TableChrome::dataRowHeights(m_document, m_tableWrapWidth);
+    for (QTextBlock block = m_document->begin(); block.isValid(); block = block.next())
+        applyBlockLineHeight(cursor, block, heights);
+    cursor.endEditBlock();
+    m_formattingTypography = false;
+    m_document->setModified(wasModified);
 }
 
 void Backend::applyDocumentTypography() {
@@ -823,8 +859,9 @@ void Backend::applyDocumentTypography() {
 
     m_formattingTypography = true;
     QTextCursor cursor(m_document);
+    const QHash<int, qreal> heights = TableChrome::dataRowHeights(m_document, m_tableWrapWidth);
     for (QTextBlock block = m_document->begin(); block.isValid(); block = block.next())
-        applyBlockLineHeight(cursor, block);
+        applyBlockLineHeight(cursor, block, heights);
     m_formattingTypography = false;
 
     m_document->setUndoRedoEnabled(undoEnabled);
@@ -846,6 +883,7 @@ void Backend::reapplyTypographyToChange() {
     m_formattingTypography = true;
     QTextCursor cursor(m_document);
     cursor.joinPreviousEditBlock();
+    const QHash<int, qreal> heights = TableChrome::dataRowHeights(m_document, m_tableWrapWidth);
     QTextBlock block = m_document->findBlock(start);
     const QTextBlock last = m_document->findBlock(end);
     if (block.isValid() && block.previous().isValid())
@@ -853,7 +891,12 @@ void Backend::reapplyTypographyToChange() {
     QTextBlock stop = last.isValid() && last.next().isValid() ? last.next().next()
                                                               : QTextBlock();
     for (; block.isValid() && block != stop; block = block.next())
-        applyBlockLineHeight(cursor, block);
+        applyBlockLineHeight(cursor, block, heights);
+    for (auto it = heights.cbegin(); it != heights.cend(); ++it) {
+        const QTextBlock tableBlock = m_document->findBlock(it.key());
+        if (tableBlock.isValid())
+            applyBlockLineHeight(cursor, tableBlock, heights);
+    }
     cursor.endEditBlock();
     m_formattingTypography = false;
 }

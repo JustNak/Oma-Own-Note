@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QColor>
 #include <QFont>
 #include <QList>
 #include <QRegularExpression>
@@ -45,6 +46,11 @@ public:
     static bool isTableSeparator(const QString &text);
     static bool isFenceLine(const QString &text);
     static TableLine parseTableLine(const QString &text);
+
+    QString searchQuery() const { return m_searchQuery; }
+    int currentMatchStart() const { return m_currentMatchStart; }
+    QColor searchBackground() const { return m_searchFormat.background().color(); }
+    QColor currentSearchBackground() const { return m_currentSearchFormat.background().color(); }
 
     // Collapsed to a single shared rule between header and body so it is not
     // absorbed into one cell's height.

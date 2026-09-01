@@ -31,6 +31,8 @@ class Backend : public QObject {
     Q_PROPERTY(QString themeForeground READ themeForeground NOTIFY themeColorsChanged)
     Q_PROPERTY(QString themeAccent READ themeAccent NOTIFY themeColorsChanged)
     Q_PROPERTY(QString themeSelection READ themeSelection NOTIFY themeColorsChanged)
+    Q_PROPERTY(qreal tableWrapWidth READ tableWrapWidth WRITE setTableWrapWidth
+               NOTIFY tableWrapWidthChanged)
 
 public:
     explicit Backend(QObject *parent = nullptr);
@@ -83,6 +85,9 @@ public:
     Q_INVOKABLE QVariantMap windowGeometry() const;
     Q_INVOKABLE void saveWindowGeometry(int x, int y, int width, int height, bool maximized);
 
+    qreal tableWrapWidth() const { return m_tableWrapWidth; }
+    void setTableWrapWidth(qreal tableWrapWidth);
+
 signals:
     void fileUrlChanged();
     void modifiedChanged();
@@ -92,6 +97,7 @@ signals:
     void textScaleChanged();
     void zoomFactorChanged();
     void themeColorsChanged();
+    void tableWrapWidthChanged();
     void closeAfterSave();
     void openDialogRequested();
     void saveDialogRequested(const QUrl &suggestedUrl);
@@ -111,6 +117,7 @@ private:
     void scheduleWordCount();
     void applyDocumentTypography();
     void reapplyTypographyToChange();
+    void restretchTableTypography();
     void scheduleRecovery();
     void writeRecovery();
     void restoreRecovery();
@@ -132,6 +139,7 @@ private:
     bool m_loading = false;
     bool m_closeAfterSave = false;
     bool m_formattingTypography = false;
+    qreal m_tableWrapWidth = 0;
     int m_formattedBlockCount = 0;
     int m_lastChangePos = 0;
     int m_lastChangeAdded = 0;

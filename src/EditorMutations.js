@@ -692,7 +692,7 @@ function cellContent(line, cell) {
 
 function tableCellAt(text, position) {
     var bounds = lineBounds(text, position);
-    if (!isTableRow(bounds.line))
+    if (!isTableRow(bounds.line) || isSeparatorRow(bounds.line))
         return null;
     var parsed = parseTableRow(bounds.line);
     if (!parsed || parsed.cells.length === 0)
@@ -844,43 +844,48 @@ function walkTableRow(text, fromPosition, direction) {
     return null;
 }
 
-function moveTableCell(editor, direction) {
-    alignTable(editor);
+function adjacentTableCell(text, info, direction) {
+    if (!info)
+        return null;
+    if (direction > 0) {
+        if (info.cellIndex + 1 < info.cells.length) {
+            return tableCellRef(info.lineStart, info.line,
+                                info.cells[info.cellIndex + 1], info.cellIndex + 1);
+        }
+        var after = info.lineEnd < text.length ? info.lineEnd + 1 : -1;
+        var nextLine = after >= 0 ? walkTableRow(text, after, 1) : null;
+        if (!nextLine)
+            return null;
+        var parsedNext = parseTableRow(nextLine.line);
+        if (!parsedNext || parsedNext.cells.length === 0)
+            return null;
+        return tableCellRef(nextLine.start, nextLine.line, parsedNext.cells[0], 0);
+    }
+    if (info.cellIndex > 0) {
+        return tableCellRef(info.lineStart, info.line,
+                            info.cells[info.cellIndex - 1], info.cellIndex - 1);
+    }
+    var previous = info.lineStart > 0
+        ? walkTableRow(text, info.lineStart - 1, -1) : null;
+    if (!previous)
+        return null;
+    var parsedPrev = parseTableRow(previous.line);
+    if (!parsedPrev || parsedPrev.cells.length === 0)
+        return null;
+    return tableCellRef(previous.start, previous.line,
+                        parsedPrev.cells[parsedPrev.cells.length - 1],
+                        parsedPrev.cells.length - 1);
+}
+
+function moveTableCell(editor, direction, align) {
+    if (align !== false)
+        alignTable(editor);
     var text = editor.text;
-    var position = editor.cursorPosition;
-    var info = tableCellAt(text, position);
+    var info = tableCellAt(text, editor.cursorPosition);
     if (!info)
         return false;
 
-    var next = null;
-    if (direction > 0) {
-        if (info.cellIndex + 1 < info.cells.length) {
-            next = tableCellRef(info.lineStart, info.line,
-                                info.cells[info.cellIndex + 1], info.cellIndex + 1);
-        } else {
-            var after = info.lineEnd < text.length ? info.lineEnd + 1 : -1;
-            var nextLine = after >= 0 ? walkTableRow(text, after, 1) : null;
-            if (nextLine) {
-                var parsedNext = parseTableRow(nextLine.line);
-                if (parsedNext && parsedNext.cells.length)
-                    next = tableCellRef(nextLine.start, nextLine.line, parsedNext.cells[0], 0);
-            }
-        }
-    } else if (info.cellIndex > 0) {
-        next = tableCellRef(info.lineStart, info.line,
-                            info.cells[info.cellIndex - 1], info.cellIndex - 1);
-    } else {
-        var previous = info.lineStart > 0
-            ? walkTableRow(text, info.lineStart - 1, -1) : null;
-        if (previous) {
-            var parsedPrev = parseTableRow(previous.line);
-            if (parsedPrev && parsedPrev.cells.length)
-                next = tableCellRef(previous.start, previous.line,
-                                    parsedPrev.cells[parsedPrev.cells.length - 1],
-                                    parsedPrev.cells.length - 1);
-        }
-    }
-
+    var next = adjacentTableCell(text, info, direction);
     if (!next)
         return true;
 
@@ -890,5 +895,158 @@ function moveTableCell(editor, direction) {
         editor.cursorPosition = caretStart;
     else
         editor.select(caretStart, caretEnd);
+    return true;
+}
+
+function confineTableCaret(editor) {
+    var text = editor.text;
+    var position = editor.cursorPosition;
+    var bounds = lineBounds(text, position);
+    if (isSeparatorRow(bounds.line)) {
+        var neighbor = walkTableRow(text, bounds.end + 1, 1)
+            || (bounds.start > 0 ? walkTableRow(text, bounds.start - 1, -1) : null);
+        if (!neighbor)
+            return true;
+        var parsed = parseTableRow(neighbor.line);
+        if (!parsed || parsed.cells.length === 0)
+            return true;
+        var content = cellContent(neighbor.line, parsed.cells[0]);
+        editor.cursorPosition = neighbor.start + content.start;
+        return true;
+    }
+
+    var info = tableCellAt(text, position);
+    if (!info)
+        return false;
+    if (editor.selectionStart !== editor.selectionEnd)
+        return true;
+
+    var contentStart = info.lineStart + info.contentStart;
+    var contentEnd = info.lineStart + info.contentEnd;
+    if (position < contentStart)
+        editor.cursorPosition = contentStart;
+    else if (position > contentEnd)
+        editor.cursorPosition = contentEnd;
+    return true;
+}
+
+function nextInsideTablePosition(text, position, direction) {
+    var info = tableCellAt(text, position);
+    if (!info)
+        return -1;
+    var start = info.lineStart + info.contentStart;
+    var end = info.lineStart + info.contentEnd;
+    var next = position + direction;
+    if (next >= start && next <= end)
+        return next;
+    var dest = adjacentTableCell(text, info, direction);
+    if (!dest)
+        return position;
+    return direction > 0
+        ? dest.lineStart + dest.contentStart
+        : dest.lineStart + dest.contentEnd;
+}
+
+function moveInsideTable(editor, direction) {
+    if (!confineTableCaret(editor))
+        return false;
+    var next = nextInsideTablePosition(editor.text, editor.cursorPosition, direction);
+    if (next < 0)
+        return false;
+    editor.cursorPosition = next;
+    return true;
+}
+
+function tableBackspace(editor) {
+    if (editor.selectionStart !== editor.selectionEnd)
+        return false;
+    if (!confineTableCaret(editor))
+        return false;
+    var info = tableCellAt(editor.text, editor.cursorPosition);
+    if (!info)
+        return false;
+    var contentStart = info.lineStart + info.contentStart;
+    if (editor.cursorPosition > contentStart)
+        return false;
+    if (info.cellIndex > 0) {
+        var previousCell = tableCellRef(info.lineStart, info.line,
+                                        info.cells[info.cellIndex - 1],
+                                        info.cellIndex - 1);
+        editor.cursorPosition = info.lineStart + previousCell.contentEnd;
+        return true;
+    }
+    if (info.lineStart > 0) {
+        var previousRow = walkTableRow(editor.text, info.lineStart - 1, -1);
+        if (previousRow) {
+            var parsedPrev = parseTableRow(previousRow.line);
+            if (parsedPrev && parsedPrev.cells.length) {
+                var last = tableCellRef(previousRow.start, previousRow.line,
+                                        parsedPrev.cells[parsedPrev.cells.length - 1],
+                                        parsedPrev.cells.length - 1);
+                editor.cursorPosition = previousRow.start + last.contentEnd;
+                return true;
+            }
+        }
+    }
+    return true;
+}
+
+function tableDelete(editor) {
+    if (editor.selectionStart !== editor.selectionEnd)
+        return false;
+    if (!confineTableCaret(editor))
+        return false;
+    var info = tableCellAt(editor.text, editor.cursorPosition);
+    if (!info)
+        return false;
+    var contentEnd = info.lineStart + info.contentEnd;
+    if (editor.cursorPosition < contentEnd)
+        return false;
+    if (info.cellIndex + 1 < info.cells.length) {
+        var nextCell = tableCellRef(info.lineStart, info.line,
+                                    info.cells[info.cellIndex + 1],
+                                    info.cellIndex + 1);
+        editor.cursorPosition = info.lineStart + nextCell.contentStart;
+        return true;
+    }
+    var after = info.lineEnd < editor.text.length ? info.lineEnd + 1 : -1;
+    var nextRow = after >= 0 ? walkTableRow(editor.text, after, 1) : null;
+    if (nextRow) {
+        var parsedNext = parseTableRow(nextRow.line);
+        if (parsedNext && parsedNext.cells.length) {
+            var first = tableCellRef(nextRow.start, nextRow.line,
+                                     parsedNext.cells[0], 0);
+            editor.cursorPosition = nextRow.start + first.contentStart;
+            return true;
+        }
+    }
+    return true;
+}
+
+function tableReturn(editor) {
+    if (!confineTableCaret(editor))
+        return false;
+    var text = editor.text;
+    var info = tableCellAt(text, editor.cursorPosition);
+    if (!info)
+        return false;
+
+    var cellIndex = info.cellIndex;
+    var after = info.lineEnd < text.length ? info.lineEnd + 1 : -1;
+    var nextRow = after >= 0 ? walkTableRow(text, after, 1) : null;
+    if (!nextRow) {
+        var insertAt = info.lineEnd;
+        replaceRange(editor, insertAt, insertAt,
+                     "\n" + pipeRow(emptyCells(info.cells.length)));
+        nextRow = walkTableRow(editor.text, insertAt + 1, 1);
+    }
+    if (!nextRow)
+        return true;
+    var parsedNext = parseTableRow(nextRow.line);
+    if (!parsedNext || parsedNext.cells.length === 0)
+        return true;
+    var index = Math.max(0, Math.min(cellIndex, parsedNext.cells.length - 1));
+    var content = cellContent(nextRow.line, parsedNext.cells[index]);
+    editor.cursorPosition = nextRow.start + content.start;
     return true;
 }

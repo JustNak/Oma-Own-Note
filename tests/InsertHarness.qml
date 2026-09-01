@@ -28,6 +28,11 @@ TextEdit {
     property string dividerMidText
     property int dividerMidCursor
     property string emptyCellTypedLine
+    property bool confinedOutsideResult
+    property string confinedOutsideLine
+    property bool tableReturnKeptRows
+    property bool arrowKeptRagged
+    property int skipPipePosition
 
     Component.onCompleted: {
         text = "";
@@ -117,5 +122,32 @@ TextEdit {
         oneColumnCursor = cursorPosition;
         if (selectionStart !== selectionEnd)
             oneColumnCursor = selectionStart;
+
+        text = "| a | b |\n| --- | --- |\n|     |     |";
+        cursorPosition = text.indexOf("\n") - 1;
+        confinedOutsideResult = EditorMutations.confineTableCaret(this);
+        confinedOutsideLine = text.split("\n")[0];
+        insert(cursorPosition, "x");
+        confinedOutsideLine = text.split("\n")[0];
+
+        text = EditorMutations.pipeTable(2, 2);
+        cursorPosition = text.length - 2;
+        EditorMutations.confineTableCaret(this);
+        var beforeReturn = text.split("\n").length;
+        tableReturnKeptRows = EditorMutations.tableReturn(this)
+            && text.split("\n").every(function(line) {
+                   return line.indexOf("|") === 0 && line.lastIndexOf("|") > 0;
+               })
+            && text.split("\n").length >= beforeReturn;
+
+        text = "| a | b |\n| - | --- |\n| longcell | x |";
+        var ragged = text;
+        cursorPosition = 2;
+        EditorMutations.moveInsideTable(this, 1);
+        arrowKeptRagged = text === ragged;
+
+        text = "| a | b |\n| --- | --- |\n|     |     |";
+        cursorPosition = 2;
+        skipPipePosition = EditorMutations.nextInsideTablePosition(text, 4, 1);
     }
 }
