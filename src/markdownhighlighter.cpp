@@ -107,8 +107,8 @@ void MarkdownHighlighter::rebuildFormats() {
     m_tableHeaderFormat.setForeground(text);
     m_tableHeaderFormat.setFontWeight(QFont::Bold);
 
-    // Pipes and the separator stay full-width so columns keep their grid.
-    // Transparent ink lets TableChrome's theme-colored rules show through.
+    // Entire table-row source stays invisible so TableChrome can paint
+    // wrapped cell text and hairlines without doubled glyphs.
     m_tableHiddenSyntaxFormat = QTextCharFormat();
     m_tableHiddenSyntaxFormat.setForeground(Qt::transparent);
 }
@@ -134,12 +134,14 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
     if (!text.isEmpty()) {
         highlightMarkers(text);
         highlightTable(text);
-        if (text.contains(QLatin1Char('`')) || text.contains(QLatin1Char('*'))
-                || text.contains(QLatin1Char('_')) || text.contains(QLatin1Char('['))) {
+        if (!isTableRow(text)
+                && (text.contains(QLatin1Char('`')) || text.contains(QLatin1Char('*'))
+                    || text.contains(QLatin1Char('_')) || text.contains(QLatin1Char('[')))) {
             highlightInline(text);
         }
     }
-    highlightSearch(text);
+    if (!isTableRow(text))
+        highlightSearch(text);
 }
 
 void MarkdownHighlighter::highlightSearch(const QString &text) {
@@ -263,25 +265,13 @@ MarkdownHighlighter::TableLine MarkdownHighlighter::parseTableLine(const QString
 }
 
 void MarkdownHighlighter::highlightTable(const QString &text) {
-    TableLine line = parseTableLine(text);
+    const TableLine line = parseTableLine(text);
     if (line.kind == TableLine::Kind::None)
         return;
 
-    if (line.kind == TableLine::Kind::Separator) {
-        setFormat(0, text.length(), m_tableHiddenSyntaxFormat);
-        return;
-    }
-
-    const QTextBlock next = currentBlock().next();
-    if (next.isValid() && isTableSeparator(next.text()))
-        line.kind = TableLine::Kind::Header;
-
-    if (line.kind == TableLine::Kind::Header) {
-        for (const Span &cell : line.cells)
-            setFormat(cell.start, cell.length, m_tableHeaderFormat);
-    }
-    for (const Span &hidden : line.hidden)
-        setFormat(hidden.start, hidden.length, m_tableHiddenSyntaxFormat);
+    // Overlay paints cell text and rules. Keep source glyphs invisible so they
+    // cannot sit on top of wrapped cells or hidden pipes.
+    setFormat(0, text.length(), m_tableHiddenSyntaxFormat);
 }
 
 void MarkdownHighlighter::highlightInline(const QString &text) {
