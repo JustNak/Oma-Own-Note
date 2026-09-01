@@ -27,6 +27,7 @@ TextEdit {
     property int oneColumnCursor
     property string dividerMidText
     property int dividerMidCursor
+    property string emptyCellTypedLine
 
     Component.onCompleted: {
         text = "";
@@ -86,6 +87,15 @@ TextEdit {
         nextCellEnd = selectionEnd;
         if (selectionStart === selectionEnd)
             nextCellStart = nextCellEnd = cursorPosition;
+
+        // Regression: Tab into an empty cell must leave the caret at the cell's
+        // left column so typed text is left-aligned, not jammed against the
+        // closing pipe (which only self-corrected on the next Tab).
+        text = EditorMutations.pipeTable(2, 2);
+        cursorPosition = 2;
+        EditorMutations.moveTableCell(this, 1);
+        insert(cursorPosition, "x");
+        emptyCellTypedLine = text.split("\n")[0];
 
         text = "";
         cursorPosition = 0;
