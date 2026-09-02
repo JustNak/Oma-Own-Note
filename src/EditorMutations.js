@@ -1023,6 +1023,57 @@ function tableDelete(editor) {
     return true;
 }
 
+// Typing "|" inside a table never inserts a raw pipe (that would split the
+// cell the caret is confined to). At the end of the last cell it appends a
+// new column instead, so a table can be grown by typing the same way it was
+// started; at the end of an inner cell it just hops to the next cell.
+function tableInsertPipe(editor) {
+    if (editor.selectionStart !== editor.selectionEnd)
+        return true;
+    if (!confineTableCaret(editor))
+        return false;
+    var text = editor.text;
+    var info = tableCellAt(text, editor.cursorPosition);
+    if (!info)
+        return false;
+    if (editor.cursorPosition < info.lineStart + info.contentEnd)
+        return true;
+
+    if (info.cellIndex + 1 < info.cells.length) {
+        var nextCell = tableCellRef(info.lineStart, info.line,
+                                    info.cells[info.cellIndex + 1], info.cellIndex + 1);
+        editor.cursorPosition = info.lineStart + nextCell.contentStart;
+        return true;
+    }
+
+    var separator = null;
+    if (info.lineEnd < text.length) {
+        var following = lineBounds(text, info.lineEnd + 1);
+        if (isSeparatorRow(following.line))
+            separator = following;
+    }
+    // Edit the separator first: it sits after the row, so the row's offsets
+    // stay valid for the second replacement.
+    if (separator) {
+        var separatorCells = splitTableLine(separator.line);
+        separatorCells.push("---");
+        replaceRange(editor, separator.start, separator.end, pipeRow(separatorCells));
+    }
+
+    var cells = splitTableLine(info.line);
+    cells.push("");
+    var rowLine = prettyPipeRow(cells, columnWidths([cells]));
+    replaceRange(editor, info.lineStart, info.lineEnd, rowLine);
+
+    var parsed = parseTableRow(rowLine);
+    if (!parsed || parsed.cells.length === 0)
+        return true;
+    var lastCell = parsed.cells[parsed.cells.length - 1];
+    var content = cellContent(rowLine, lastCell);
+    editor.cursorPosition = info.lineStart + content.start;
+    return true;
+}
+
 function tableReturn(editor) {
     if (!confineTableCaret(editor))
         return false;

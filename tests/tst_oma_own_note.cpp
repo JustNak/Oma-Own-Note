@@ -15,6 +15,7 @@
 #include <QTextBlock>
 #include <QTextBlockFormat>
 #include <QTextCursor>
+#include <QAbstractTextDocumentLayout>
 #include <QTextDocument>
 #include <QTextLayout>
 
@@ -345,7 +346,10 @@ private slots:
 
         QCOMPARE(formatAt(2).foreground().color().alpha(), 0);
         QCOMPARE(formatAt(2).background().style(), Qt::NoBrush);
-        QVERIFY(qFuzzyIsNull(formatAt(0).fontPointSize()) || formatAt(0).fontPointSize() > 8);
+        // Table source is collapsed like inline markers so a selection cannot
+        // repaint it over the overlay.
+        QCOMPARE(formatAt(0).fontPointSize(), 1.0);
+        QVERIFY(formatAt(0).fontLetterSpacing() < 0);
         QCOMPARE(formatAt(0).foreground().color().alpha(), 0);
         QCOMPARE(formatAt(0).background().style(), Qt::NoBrush);
 
@@ -768,6 +772,21 @@ private slots:
         QVERIFY2(qAbs(bodyGap - nextBodyGap) <= 1.0,
                  qPrintable(QStringLiteral("body %1 vs next %2")
                             .arg(bodyGap).arg(nextBodyGap)));
+
+        // The overlay's body rows must sit on the body blocks, including the
+        // collapsed separator block laid out between header and body.
+        const QTextBlock firstBody = separator.next();
+        QVERIFY(firstBody.isValid());
+        QVERIFY(firstBody.next().isValid());
+        QAbstractTextDocumentLayout *layout = document->documentLayout();
+        const qreal bodyTop = layout->blockBoundingRect(firstBody).top();
+        const qreal nextBodyTop = layout->blockBoundingRect(firstBody.next()).top();
+        QVERIFY2(qAbs(edges.at(1) - bodyTop) <= 0.5,
+                 qPrintable(QStringLiteral("overlay body top %1 vs block top %2")
+                            .arg(edges.at(1)).arg(bodyTop)));
+        QVERIFY2(qAbs(edges.at(2) - nextBodyTop) <= 0.5,
+                 qPrintable(QStringLiteral("overlay body bottom %1 vs next block top %2")
+                            .arg(edges.at(2)).arg(nextBodyTop)));
     }
 
     void tableZoomInKeepsWritingColumn() {
@@ -1054,6 +1073,131 @@ private slots:
         const auto tables = TableChrome::collectTables(&document, 2000);
         QCOMPARE(tables.size(), 1);
         QCOMPARE(tables.first().columns.size(), 4);
+    }
+
+    void tableCaretStaysInsideEmptyCell() {
+        QTextDocument document;
+        QFont font(QStringLiteral("monospace"));
+        font.setStyleHint(QFont::Monospace);
+        font.setFixedPitch(true);
+        font.setPixelSize(16);
+        document.setDefaultFont(font);
+        const QString text = QStringLiteral("| a | b |\n| --- | --- |\n|     |     |\n");
+        document.setPlainText(text);
+        document.setTextWidth(400);
+        TableChrome chrome;
+        chrome.setTextDocument(&document);
+        chrome.setWrapWidth(400);
+
+        const auto tables = TableChrome::collectTables(&document, 400);
+        QCOMPARE(tables.size(), 1);
+        const QVector<qreal> edges = tables.first().rowEdges;
+        QVERIFY(edges.size() >= 3);
+        const qreal rowTop = edges.at(1);
+        const qreal rowBottom = edges.at(2);
+
+        const int emptyCell = text.indexOf(QStringLiteral("|     |")) + 2;
+        QVERIFY(chrome.positionInTable(emptyCell));
+        const QRectF caret = chrome.caretRect(emptyCell);
+        QVERIFY(caret.height() > 0);
+        QVERIFY2(caret.top() >= rowTop - 0.5 && caret.bottom() <= rowBottom + 0.5,
+                 qPrintable(QStringLiteral("caret %1..%2 outside row %3..%4")
+                            .arg(caret.top()).arg(caret.bottom())
+                            .arg(rowTop).arg(rowBottom)));
+        QVERIFY2(caret.height() < rowBottom - rowTop,
+                 qPrintable(QStringLiteral("caret %1 vs row %2")
+                            .arg(caret.height()).arg(rowBottom - rowTop)));
+
+        // Filled cells centre a single text line; the empty cell's caret must
+        // sit on the same line as its neighbours, not on the row midpoint.
+        const QRectF filled = chrome.caretRect(text.indexOf(QLatin1Char('a')));
+        const qreal headerTop = edges.at(0);
+        QVERIFY2(qAbs((caret.top() - rowTop) - (filled.top() - headerTop)) <= 1.0,
+                 qPrintable(QStringLiteral("empty offset %1 vs filled offset %2")
+                            .arg(caret.top() - rowTop).arg(filled.top() - headerTop)));
+    }
+
+    void tablePipeAppendsCell() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+        const QString original = QStringLiteral("| a | b |\n| --- | --- |\n| c | d |");
+        editor->setProperty("text", original);
+        editor->setProperty("cursorPosition", original.indexOf(QLatin1Char('b')) + 1);
+        QVERIFY(QMetaObject::invokeMethod(editor, "forceActiveFocus"));
+
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
+        QVERIFY(quickWindow);
+
+        // A pipe in the middle of a cell is dropped rather than splitting it.
+        editor->setProperty("cursorPosition", original.indexOf(QLatin1Char('b')));
+        QTest::keyClick(quickWindow, Qt::Key_Bar);
+        QCOMPARE(editor->property("text").toString(), original);
+
+        // At the end of the last cell it grows the table by one column.
+        editor->setProperty("cursorPosition", original.indexOf(QLatin1Char('b')) + 1);
+        QTest::keyClick(quickWindow, Qt::Key_Bar);
+        QStringList lines = editor->property("text").toString().split(QLatin1Char('\n'));
+        QCOMPARE(lines.size(), 3);
+        QCOMPARE(lines.at(0).count(QLatin1Char('|')), 4);
+        QCOMPARE(lines.at(1).count(QLatin1Char('|')), 4);
+        QCOMPARE(lines.at(1).count(QStringLiteral("---")), 3);
+        QVERIFY(MarkdownHighlighter::isTableSeparator(lines.at(1)));
+        QCOMPARE(lines.at(2), QStringLiteral("| c | d |"));
+
+        // The caret lands in the new cell, so typing fills it.
+        QTest::keyClick(quickWindow, Qt::Key_X);
+        lines = editor->property("text").toString().split(QLatin1Char('\n'));
+        QCOMPARE(MarkdownHighlighter::parseTableLine(lines.at(0)).cells.size(), 3);
+        QVERIFY2(lines.at(0).contains(QStringLiteral("| x")), qPrintable(lines.at(0)));
+        QVERIFY(lines.at(0).startsWith(QStringLiteral("| a")));
+
+        // At the end of an inner cell the pipe hops to the next cell.
+        const QString grown = editor->property("text").toString();
+        editor->setProperty("cursorPosition", grown.indexOf(QLatin1Char('a')) + 1);
+        QTest::keyClick(quickWindow, Qt::Key_Bar);
+        QCOMPARE(editor->property("text").toString(), grown);
+        QCOMPARE(editor->property("cursorPosition").toInt(), grown.indexOf(QLatin1Char('b')));
+    }
+
+    void tableArrowKeysLeaveTable() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+        const QString text = QStringLiteral(
+            "above\n| a | b |\n| --- | --- |\n| c | d |\nbelow");
+        editor->setProperty("text", text);
+        QVERIFY(QMetaObject::invokeMethod(editor, "forceActiveFocus"));
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
+        QVERIFY(quickWindow);
+
+        editor->setProperty("cursorPosition", text.indexOf(QLatin1Char('c')));
+        QTest::keyClick(quickWindow, Qt::Key_Down);
+        QVERIFY(editor->property("cursorPosition").toInt() >= text.indexOf(QStringLiteral("below")));
+
+        editor->setProperty("cursorPosition", text.indexOf(QLatin1Char('a')));
+        QTest::keyClick(quickWindow, Qt::Key_Up);
+        QVERIFY(editor->property("cursorPosition").toInt() < text.indexOf(QLatin1Char('|')));
     }
 
     void tableChromeIgnoresCaretOutsideTable() {
@@ -1371,15 +1515,13 @@ private:
             qWarning("table header layout is missing");
             return false;
         }
+        // Source glyphs of table rows must take no space: TextEdit repaints
+        // selected glyphs in selectedTextColor, so any advance would let the
+        // raw pipes show through the overlay when a table is selected.
         const QTextLine headerLine = header.layout()->lineAt(0);
-        const qreal pipeWidth = headerLine.cursorToX(1) - headerLine.cursorToX(0);
-        const qreal em = QFontMetricsF(font).horizontalAdvance(QLatin1Char('|'));
-        if (pipeWidth <= em * 0.6) {
-            qWarning("pipe width %f vs em %f", pipeWidth, em);
-            return false;
-        }
-        if (!(qFuzzyIsNull(formatAt(0).fontPointSize()) || formatAt(0).fontPointSize() > 8)) {
-            qWarning("pipe font was collapsed");
+        const qreal sourceWidth = headerLine.naturalTextWidth();
+        if (sourceWidth > 1 || formatAt(0).foreground().color().alpha() != 0) {
+            qWarning("table source still has width %f", sourceWidth);
             return false;
         }
         if (formatAt(0).background().style() != Qt::NoBrush

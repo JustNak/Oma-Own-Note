@@ -115,9 +115,17 @@ void MarkdownHighlighter::rebuildFormats() {
     m_tableHeaderFormat.setFontWeight(QFont::Bold);
 
     // Entire table-row source stays invisible so TableChrome can paint
-    // wrapped cell text and hairlines without doubled glyphs.
+    // wrapped cell text and hairlines without doubled glyphs. A transparent
+    // foreground alone is not enough: TextEdit repaints selected glyphs in
+    // selectedTextColor and fills their advance with the selection colour, so
+    // the raw pipes would reappear over the overlay whenever a table is
+    // selected. Collapse the glyphs to zero advance as well, like the inline
+    // markers, so there is nothing for the selection to paint.
     m_tableHiddenSyntaxFormat = QTextCharFormat();
     m_tableHiddenSyntaxFormat.setForeground(Qt::transparent);
+    m_tableHiddenSyntaxFormat.setFontPointSize(1.0);
+    m_tableHiddenSyntaxFormat.setFontLetterSpacingType(QFont::AbsoluteSpacing);
+    m_tableHiddenSyntaxFormat.setFontLetterSpacing(-charWidth);
 }
 
 void MarkdownHighlighter::highlightBlock(const QString &text) {

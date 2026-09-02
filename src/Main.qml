@@ -760,10 +760,17 @@ ApplicationWindow {
                          && overlayRect.height > 0
                 width: 1 / Math.max(canvas.scale, 0.01)
                 color: win.strongTextColor
-                x: editor.x + overlayRect.x
-                y: editor.y + overlayRect.y
+                // Snap to the post-zoom device grid so a 1px bar does not
+                // straddle two device pixels and blur into a 2px bar at
+                // fractional zoom levels.
+                x: snapToDevice(editor.x + overlayRect.x)
+                y: snapToDevice(editor.y + overlayRect.y)
                 height: overlayRect.height
                 z: 2
+                function snapToDevice(value) {
+                    var unit = Math.max(canvas.scale, 0.01) * Screen.devicePixelRatio;
+                    return Math.round(value * unit) / unit;
+                }
                 readonly property rect overlayRect: {
                     var _rev = tableChrome.layoutRevision;
                     return tableChrome.caretRect(editor.cursorPosition);
@@ -1002,6 +1009,21 @@ ApplicationWindow {
                 function moveCursorVertically(direction, extendSelection) {
                     var tablePos = tableChrome.movePositionVertically(editor.cursorPosition,
                                                                       direction);
+                    if (tablePos < 0 && tableChrome.positionInTable(editor.cursorPosition)) {
+                        // No row above/below inside the table: step onto the
+                        // line just outside it. The source glyphs of table
+                        // rows have no size, so cursorRectangle cannot be
+                        // used to walk out of the table.
+                        var extent = EditorMutations.tableExtent(text, cursorPosition);
+                        if (extent) {
+                            if (direction > 0 && extent.end < text.length)
+                                tablePos = extent.end + 1;
+                            else if (direction < 0 && extent.start > 0)
+                                tablePos = EditorMutations.lineBounds(text, extent.start - 1).start;
+                            else
+                                return;
+                        }
+                    }
                     if (tablePos >= 0) {
                         if (extendSelection)
                             moveCursorSelection(tablePos, TextEdit.SelectCharacters);
@@ -1075,6 +1097,7 @@ ApplicationWindow {
                             return;
                         }
                         if (event.text === "|") {
+                            EditorMutations.tableInsertPipe(editor);
                             event.accepted = true;
                             return;
                         }
