@@ -1009,6 +1009,21 @@ ApplicationWindow {
                 function moveCursorVertically(direction, extendSelection) {
                     var tablePos = tableChrome.movePositionVertically(editor.cursorPosition,
                                                                       direction);
+                    if (tablePos < 0 && tableChrome.positionInTable(editor.cursorPosition)) {
+                        // No row above/below inside the table: step onto the
+                        // line just outside it. The source glyphs of table
+                        // rows have no size, so cursorRectangle cannot be
+                        // used to walk out of the table.
+                        var extent = EditorMutations.tableExtent(text, cursorPosition);
+                        if (extent) {
+                            if (direction > 0 && extent.end < text.length)
+                                tablePos = extent.end + 1;
+                            else if (direction < 0 && extent.start > 0)
+                                tablePos = EditorMutations.lineBounds(text, extent.start - 1).start;
+                            else
+                                return;
+                        }
+                    }
                     if (tablePos >= 0) {
                         if (extendSelection)
                             moveCursorSelection(tablePos, TextEdit.SelectCharacters);
