@@ -1502,6 +1502,38 @@ private slots:
                             .arg(atPipe.x()).arg(atWord.x())));
     }
 
+    void tableCaretAtUnclosedCellShowsTrailingSpace() {
+        QTextDocument document;
+        QFont font(QStringLiteral("monospace"));
+        font.setStyleHint(QFont::Monospace);
+        font.setFixedPitch(true);
+        font.setPixelSize(16);
+        document.setDefaultFont(font);
+        const QString text = QStringLiteral("| a | hello  \n| --- | --- |\n|     |     |\n");
+        document.setPlainText(text);
+        document.setTextWidth(400);
+        TableChrome chrome;
+        chrome.setTextDocument(&document);
+        chrome.setWrapWidth(400);
+
+        const int hello = text.indexOf(QStringLiteral("hello"));
+        QVERIFY(hello >= 0);
+        const int lineEnd = text.indexOf(QLatin1Char('\n'));
+        QVERIFY(lineEnd > hello);
+        QVERIFY(text.at(lineEnd - 1) != QLatin1Char('|'));
+
+        chrome.setCursorPosition(hello + 5);
+        const QRectF atWord = chrome.caretRect(hello + 5);
+        chrome.setCursorPosition(lineEnd);
+        const QRectF atEnd = chrome.caretRect(lineEnd);
+
+        QVERIFY(atWord.height() > 0);
+        QVERIFY2(atEnd.height() > 0, "caret vanished at unclosed cell end");
+        QVERIFY2(atEnd.x() > atWord.x() + 0.5,
+                 qPrintable(QStringLiteral("end caret %1 vs word caret %2")
+                            .arg(atEnd.x()).arg(atWord.x())));
+    }
+
     void tablePipeAppendsCell() {
         const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
         QVERIFY(!mainQmlPath.isEmpty());

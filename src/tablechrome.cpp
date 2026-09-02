@@ -84,15 +84,21 @@ static void contentSpan(const QString &line, const MarkdownHighlighter::Span &ce
 
 // Pretty-print padding stays hidden, but spaces at or before the caret are
 // real cell text so a typed trailing space stays visible and the overlay
-// caret can sit in it. The closing `|` is inside the typing span; it is not
-// a typed space, so a caret there must not unhide unused padding.
-static int visibleEndForCursor(int contentEnd, int typingStart, int typingEnd,
-                               int blockPosition, int cursorPosition) {
+// caret can sit in it. A caret on a closing `|` must not unhide unused
+// padding. A last cell with no closing pipe uses typingEnd at the end of
+// the line; a typed space there is real content.
+static int visibleEndForCursor(const QString &line, int contentEnd, int typingStart,
+                               int typingEnd, int blockPosition, int cursorPosition) {
     if (cursorPosition < 0)
         return contentEnd;
     const int absStart = blockPosition + typingStart;
     const int absEnd = blockPosition + typingEnd;
-    if (cursorPosition < absStart || cursorPosition >= absEnd)
+    if (cursorPosition < absStart || cursorPosition > absEnd)
+        return contentEnd;
+    const bool onClosingPipe = cursorPosition == absEnd
+            && typingEnd < line.size()
+            && line.at(typingEnd) == QLatin1Char('|');
+    if (onClosingPipe)
         return contentEnd;
     const int cursorInLine = cursorPosition - blockPosition;
     return qBound(typingStart, qMax(contentEnd, cursorInLine), typingEnd);
@@ -101,7 +107,7 @@ static int visibleEndForCursor(int contentEnd, int typingStart, int typingEnd,
 static QString visibleCellText(const QString &line, int contentStart, int contentEnd,
                                int typingStart, int typingEnd,
                                int blockPosition, int cursorPosition) {
-    const int visibleEnd = visibleEndForCursor(contentEnd, typingStart, typingEnd,
+    const int visibleEnd = visibleEndForCursor(line, contentEnd, typingStart, typingEnd,
                                                blockPosition, cursorPosition);
     if (visibleEnd <= contentStart)
         return {};
@@ -892,13 +898,14 @@ QRectF TableChrome::caretRect(int position) const {
 
     QString text = cell->text;
     int offset = qBound(0, position - start, text.size());
-    if (position > start + text.size() && position < typingEnd && m_document) {
+    if (position > start + text.size() && position <= typingEnd && m_document) {
         const QTextBlock block = m_document->findBlock(cell->blockPosition);
         if (block.isValid()) {
-            const int visEnd = visibleEndForCursor(cell->contentEnd, cell->typingStart,
+            const QString line = block.text();
+            const int visEnd = visibleEndForCursor(line, cell->contentEnd, cell->typingStart,
                                                    cell->typingEnd, cell->blockPosition,
                                                    position);
-            text = block.text().mid(cell->contentStart, visEnd - cell->contentStart);
+            text = line.mid(cell->contentStart, visEnd - cell->contentStart);
             offset = qBound(0, position - start, text.size());
         }
     }
