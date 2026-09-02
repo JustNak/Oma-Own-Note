@@ -921,6 +921,8 @@ function confineTableCaret(editor) {
     if (editor.selectionStart !== editor.selectionEnd)
         return true;
 
+    // Trimmed content: Left/Right skip column padding. Backspace/Delete use
+    // tableTypingSpan instead, so a trailing typed space is still deletable.
     var contentStart = info.lineStart + info.contentStart;
     var contentEnd = info.lineStart + info.contentEnd;
     if (position < contentStart)
@@ -930,16 +932,31 @@ function confineTableCaret(editor) {
     return true;
 }
 
-function tableTypingSpan(info) {
-    var cell = info.cells[info.cellIndex];
-    var left = info.lineStart + cell.start;
-    var right = info.lineStart + cell.end;
+function tableCellTypingSpan(lineStart, line, cell) {
+    var left = lineStart + cell.start;
+    var right = lineStart + cell.end;
     if (left < right) {
-        var first = info.line.charAt(cell.start);
+        var first = line.charAt(cell.start);
         if (first === " " || first === "\t")
             left++;
     }
     return { start: left, end: right };
+}
+
+function tableTypingSpan(info) {
+    return tableCellTypingSpan(info.lineStart, info.line, info.cells[info.cellIndex]);
+}
+
+// Backspace/Delete must not use confineTableCaret: that helper clamps to
+// trimmed cellContent, which skips a trailing typed space and then deletes
+// the last letter instead ("hello " + Backspace → "hell ").
+function tableInfoForEdit(editor) {
+    var bounds = lineBounds(editor.text, editor.cursorPosition);
+    if (isSeparatorRow(bounds.line)) {
+        if (!confineTableCaret(editor))
+            return null;
+    }
+    return tableCellAt(editor.text, editor.cursorPosition);
 }
 
 function tableCellIsBlank(info) {
@@ -1008,19 +1025,19 @@ function moveInsideTable(editor, direction) {
 function tableBackspace(editor) {
     if (editor.selectionStart !== editor.selectionEnd)
         return false;
-    if (!confineTableCaret(editor))
-        return false;
-    var info = tableCellAt(editor.text, editor.cursorPosition);
+    var info = tableInfoForEdit(editor);
     if (!info)
         return false;
-    var contentStart = info.lineStart + info.contentStart;
-    if (editor.cursorPosition > contentStart)
+    var span = tableTypingSpan(info);
+    var pos = editor.cursorPosition;
+    if (pos > span.end)
+        editor.cursorPosition = pos = span.end;
+    if (pos > span.start)
         return false;
     if (info.cellIndex > 0) {
-        var previousCell = tableCellRef(info.lineStart, info.line,
-                                        info.cells[info.cellIndex - 1],
-                                        info.cellIndex - 1);
-        editor.cursorPosition = info.lineStart + previousCell.contentEnd;
+        var previous = tableCellTypingSpan(info.lineStart, info.line,
+                                           info.cells[info.cellIndex - 1]);
+        editor.cursorPosition = previous.end;
         return true;
     }
     if (info.lineStart > 0) {
@@ -1028,10 +1045,9 @@ function tableBackspace(editor) {
         if (previousRow) {
             var parsedPrev = parseTableRow(previousRow.line);
             if (parsedPrev && parsedPrev.cells.length) {
-                var last = tableCellRef(previousRow.start, previousRow.line,
-                                        parsedPrev.cells[parsedPrev.cells.length - 1],
-                                        parsedPrev.cells.length - 1);
-                editor.cursorPosition = previousRow.start + last.contentEnd;
+                var last = tableCellTypingSpan(previousRow.start, previousRow.line,
+                                               parsedPrev.cells[parsedPrev.cells.length - 1]);
+                editor.cursorPosition = last.end;
                 return true;
             }
         }
@@ -1042,19 +1058,19 @@ function tableBackspace(editor) {
 function tableDelete(editor) {
     if (editor.selectionStart !== editor.selectionEnd)
         return false;
-    if (!confineTableCaret(editor))
-        return false;
-    var info = tableCellAt(editor.text, editor.cursorPosition);
+    var info = tableInfoForEdit(editor);
     if (!info)
         return false;
-    var contentEnd = info.lineStart + info.contentEnd;
-    if (editor.cursorPosition < contentEnd)
+    var span = tableTypingSpan(info);
+    var pos = editor.cursorPosition;
+    if (pos < span.start)
+        editor.cursorPosition = pos = span.start;
+    if (pos < span.end)
         return false;
     if (info.cellIndex + 1 < info.cells.length) {
-        var nextCell = tableCellRef(info.lineStart, info.line,
-                                    info.cells[info.cellIndex + 1],
-                                    info.cellIndex + 1);
-        editor.cursorPosition = info.lineStart + nextCell.contentStart;
+        var next = tableCellTypingSpan(info.lineStart, info.line,
+                                       info.cells[info.cellIndex + 1]);
+        editor.cursorPosition = next.start;
         return true;
     }
     var after = info.lineEnd < editor.text.length ? info.lineEnd + 1 : -1;
@@ -1062,9 +1078,9 @@ function tableDelete(editor) {
     if (nextRow) {
         var parsedNext = parseTableRow(nextRow.line);
         if (parsedNext && parsedNext.cells.length) {
-            var first = tableCellRef(nextRow.start, nextRow.line,
-                                     parsedNext.cells[0], 0);
-            editor.cursorPosition = nextRow.start + first.contentStart;
+            var first = tableCellTypingSpan(nextRow.start, nextRow.line,
+                                            parsedNext.cells[0]);
+            editor.cursorPosition = first.start;
             return true;
         }
     }

@@ -24,13 +24,18 @@
 #include "tablechrome.h"
 #include "viewzoom.h"
 
-static QString firstTableCellText(const QString &line)
+static QString firstTableCellRaw(const QString &line)
 {
     const auto parsed = MarkdownHighlighter::parseTableLine(line);
     if (parsed.cells.isEmpty())
         return {};
     const MarkdownHighlighter::Span cell = parsed.cells.first();
-    return line.mid(cell.start, cell.length).trimmed();
+    return line.mid(cell.start, cell.length);
+}
+
+static QString firstTableCellText(const QString &line)
+{
+    return firstTableCellRaw(line).trimmed();
 }
 
 static void typeIntoWindow(QQuickWindow *window, const QString &text)
@@ -1047,6 +1052,75 @@ private slots:
                                    .section(QLatin1Char('\n'), 0, 0);
         QCOMPARE(firstTableCellText(header), QStringLiteral("a"));
         QVERIFY2(!header.contains(QChar(8)), qPrintable(header.toUtf8().toHex()));
+    }
+
+    void tableBackspaceDeletesTrailingSpace() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+        const QString original = QStringLiteral("|     |     |\n| --- | --- |\n|     |     |");
+        editor->setProperty("text", original);
+        editor->setProperty("cursorPosition", 2);
+        QVERIFY(QMetaObject::invokeMethod(editor, "forceActiveFocus"));
+
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
+        QVERIFY(quickWindow);
+        typeIntoWindow(quickWindow, QStringLiteral("hello "));
+        QTest::keyClick(quickWindow, Qt::Key_Backspace);
+
+        const QString header = editor->property("text").toString()
+                                   .section(QLatin1Char('\n'), 0, 0);
+        const QString raw = firstTableCellRaw(header);
+        QCOMPARE(firstTableCellText(header), QStringLiteral("hello"));
+        QVERIFY2(!raw.contains(QStringLiteral("hello ")), qPrintable(raw));
+        QVERIFY2(!raw.contains(QStringLiteral("hell ")), qPrintable(raw));
+    }
+
+    void tableDeleteRemovesTrailingSpace() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+        const QString original = QStringLiteral("|     |     |\n| --- | --- |\n|     |     |");
+        editor->setProperty("text", original);
+        editor->setProperty("cursorPosition", 2);
+        QVERIFY(QMetaObject::invokeMethod(editor, "forceActiveFocus"));
+
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
+        QVERIFY(quickWindow);
+        typeIntoWindow(quickWindow, QStringLiteral("hello "));
+
+        const QString typed = editor->property("text").toString();
+        const int hello = typed.indexOf(QStringLiteral("hello"));
+        QVERIFY(hello >= 0);
+        editor->setProperty("cursorPosition", hello + 5);
+        QVERIFY(QMetaObject::invokeMethod(editor, "forceActiveFocus"));
+        QTest::keyClick(quickWindow, Qt::Key_Delete);
+
+        const QString header = editor->property("text").toString()
+                                   .section(QLatin1Char('\n'), 0, 0);
+        const QString raw = firstTableCellRaw(header);
+        QCOMPARE(firstTableCellText(header), QStringLiteral("hello"));
+        QVERIFY2(!raw.contains(QStringLiteral("hello ")), qPrintable(raw));
     }
 
     void tableEnterDoesNotSplitRow() {
