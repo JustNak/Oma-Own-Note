@@ -1187,10 +1187,12 @@ ApplicationWindow {
                 onTextChanged: {
                     if (win.searchUpdating)
                         return;
+                    backend.tableCaretPosition = cursorPosition;
                     var contentChanged = backend.editorTextChanged();
                     if (win.searchOpen && contentChanged)
                         win.updateSearch();
                 }
+                onCursorPositionChanged: backend.tableCaretPosition = cursorPosition
 
                 Text {
                     anchors.left: parent.left
@@ -1206,6 +1208,7 @@ ApplicationWindow {
                 Component.onCompleted: {
                     backend.attachDocument(textDocument);
                     backend.tableWrapWidth = width;
+                    backend.tableCaretPosition = cursorPosition;
                     forceActiveFocus();
                 }
                 onWidthChanged: backend.tableWrapWidth = width

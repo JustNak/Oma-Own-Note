@@ -1146,6 +1146,142 @@ private slots:
         QCOMPARE(spacesAfterWord(raw, QStringLiteral("hello")), spacesBefore - 1);
     }
 
+    void tableTypingDoesNotInsertPhantomSpace() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+        const QString original = QStringLiteral("|     |     |\n| --- | --- |\n|     |     |");
+        editor->setProperty("text", original);
+        editor->setProperty("cursorPosition", 2);
+        QVERIFY(QMetaObject::invokeMethod(editor, "forceActiveFocus"));
+
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
+        QVERIFY(quickWindow);
+        typeIntoWindow(quickWindow, QStringLiteral("This is a test ofhow"));
+
+        const QString header = editor->property("text").toString()
+                                   .section(QLatin1Char('\n'), 0, 0);
+        QCOMPARE(firstTableCellText(header), QStringLiteral("This is a test ofhow"));
+        QVERIFY2(!header.contains(QStringLiteral("of how")), qPrintable(header));
+    }
+
+    void tableTypingKeepsSingleSpaceBeforeHow() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+        const QString original = QStringLiteral("|     |     |\n| --- | --- |\n|     |     |");
+        editor->setProperty("text", original);
+        editor->setProperty("cursorPosition", 2);
+        QVERIFY(QMetaObject::invokeMethod(editor, "forceActiveFocus"));
+
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
+        QVERIFY(quickWindow);
+        typeIntoWindow(quickWindow, QStringLiteral("This is a test of how"));
+
+        const QString header = editor->property("text").toString()
+                                   .section(QLatin1Char('\n'), 0, 0);
+        const QString raw = firstTableCellRaw(header);
+        QCOMPARE(firstTableCellText(header), QStringLiteral("This is a test of how"));
+        QVERIFY2(raw.contains(QStringLiteral("of how")), qPrintable(raw));
+        QVERIFY2(!raw.contains(QStringLiteral("of  how")), qPrintable(raw));
+    }
+
+    void tableTypingKeepsDoubleSpaceBeforeHow() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+        const QString original = QStringLiteral("|     |     |\n| --- | --- |\n|     |     |");
+        editor->setProperty("text", original);
+        editor->setProperty("cursorPosition", 2);
+        QVERIFY(QMetaObject::invokeMethod(editor, "forceActiveFocus"));
+
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
+        QVERIFY(quickWindow);
+        typeIntoWindow(quickWindow, QStringLiteral("This is a test of  how"));
+
+        const QString header = editor->property("text").toString()
+                                   .section(QLatin1Char('\n'), 0, 0);
+        const QString raw = firstTableCellRaw(header);
+        QCOMPARE(firstTableCellText(header), QStringLiteral("This is a test of  how"));
+        QVERIFY2(raw.contains(QStringLiteral("of  how")), qPrintable(raw));
+        QVERIFY2(!raw.contains(QStringLiteral("of   how")), qPrintable(raw));
+    }
+
+    void tableCaretFollowsTrailingSpaces() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+        auto *chrome = window->findChild<TableChrome *>(QStringLiteral("tableChrome"));
+        QVERIFY(chrome);
+        const QString original = QStringLiteral("|     |     |\n| --- | --- |\n|     |     |");
+        editor->setProperty("text", original);
+        editor->setProperty("cursorPosition", 2);
+        QVERIFY(QMetaObject::invokeMethod(editor, "forceActiveFocus"));
+
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
+        QVERIFY(quickWindow);
+        typeIntoWindow(quickWindow, QStringLiteral("hello"));
+        QTest::keyClick(quickWindow, Qt::Key_Space);
+        const QString afterOne = editor->property("text").toString();
+        const int hello = afterOne.indexOf(QStringLiteral("hello"));
+        QVERIFY(hello >= 0);
+        const QRectF atWord = chrome->caretRect(hello + 5);
+        const QRectF atSpace = chrome->caretRect(editor->property("cursorPosition").toInt());
+        QVERIFY(atWord.height() > 0);
+        QVERIFY2(atSpace.height() > 0, "caret vanished after one trailing space");
+        QVERIFY2(atSpace.x() > atWord.x() + 0.5,
+                 qPrintable(QStringLiteral("space caret %1 vs word caret %2")
+                            .arg(atSpace.x()).arg(atWord.x())));
+
+        QTest::keyClick(quickWindow, Qt::Key_Space);
+        const QRectF atTwo = chrome->caretRect(editor->property("cursorPosition").toInt());
+        const QRectF atOneAfter = chrome->caretRect(hello + 6);
+        QVERIFY2(atTwo.height() > 0, "caret vanished after two trailing spaces");
+        QVERIFY2(atTwo.x() > atOneAfter.x() + 0.5,
+                 qPrintable(QStringLiteral("two-space caret %1 vs one-space caret %2")
+                            .arg(atTwo.x()).arg(atOneAfter.x())));
+    }
+
     void tableEnterDoesNotSplitRow() {
         const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
         QVERIFY(!mainQmlPath.isEmpty());
