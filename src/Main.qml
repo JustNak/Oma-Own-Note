@@ -1090,7 +1090,6 @@ ApplicationWindow {
                         || EditorMutations.isSeparatorRow(
                             EditorMutations.lineBounds(editor.text, editor.cursorPosition).line);
                     if (inTable && !commandModifier) {
-                        EditorMutations.confineTableCaret(editor);
                         if (returnKey) {
                             EditorMutations.tableReturn(editor);
                             event.accepted = true;
@@ -1101,17 +1100,16 @@ ApplicationWindow {
                             event.accepted = true;
                             return;
                         }
-                        if (event.key === Qt.Key_Backspace
-                                && EditorMutations.tableBackspace(editor)) {
-                            event.accepted = true;
+                        if (event.key === Qt.Key_Backspace) {
+                            event.accepted = EditorMutations.tableBackspace(editor);
                             return;
                         }
-                        if (event.key === Qt.Key_Delete
-                                && EditorMutations.tableDelete(editor)) {
-                            event.accepted = true;
+                        if (event.key === Qt.Key_Delete) {
+                            event.accepted = EditorMutations.tableDelete(editor);
                             return;
                         }
                         if (event.key === Qt.Key_Right || event.key === Qt.Key_Left) {
+                            EditorMutations.confineTableCaret(editor);
                             var tableStep = event.key === Qt.Key_Right ? 1 : -1;
                             var nextPos = EditorMutations.nextInsideTablePosition(
                                 editor.text, editor.cursorPosition, tableStep);
@@ -1124,6 +1122,33 @@ ApplicationWindow {
                             }
                             event.accepted = true;
                             return;
+                        }
+                        // Insert at the logical cell offset. Qt's visual caret on
+                        // collapsed table source otherwise puts the first letter
+                        // at the right pad and the rest in front of it ("hisT").
+                        // Skip control keys/text: on Linux Backspace/Delete still
+                        // have event.text ("\b" / "\x7f"), and tableBackspace
+                        // returning false used to fall through and insert them.
+                        if (event.text.length > 0
+                                && event.key !== Qt.Key_Backspace
+                                && event.key !== Qt.Key_Delete
+                                && event.key !== Qt.Key_Escape
+                                && event.key !== Qt.Key_Tab
+                                && event.key !== Qt.Key_Backtab
+                                && event.key !== Qt.Key_Return
+                                && event.key !== Qt.Key_Enter) {
+                            var printable = true;
+                            for (var i = 0; i < event.text.length; i++) {
+                                if (event.text.charCodeAt(i) < 32) {
+                                    printable = false;
+                                    break;
+                                }
+                            }
+                            if (printable) {
+                                EditorMutations.tableInsertText(editor, event.text);
+                                event.accepted = true;
+                                return;
+                            }
                         }
                     }
                     if (returnKey && !commandModifier) {
@@ -1176,11 +1201,6 @@ ApplicationWindow {
                     font.family: editor.font.family
                     font.pixelSize: editor.font.pixelSize
                     font.weight: editor.font.weight
-                }
-
-                onCursorPositionChanged: {
-                    if (tableChrome.positionInTable(cursorPosition))
-                        EditorMutations.confineTableCaret(editor);
                 }
 
                 Component.onCompleted: {
