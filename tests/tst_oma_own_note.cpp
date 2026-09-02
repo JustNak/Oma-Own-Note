@@ -1171,7 +1171,7 @@ private slots:
 
         const QString header = editor->property("text").toString()
                                    .section(QLatin1Char('\n'), 0, 0);
-        QCOMPARE(firstTableCellText(header), QStringLiteral("This is a test ofhow"));
+        QCOMPARE(firstTableCellText(header), QStringLiteral("this is a test ofhow"));
         QVERIFY2(!header.contains(QStringLiteral("of how")), qPrintable(header));
     }
 
@@ -1201,7 +1201,7 @@ private slots:
         const QString header = editor->property("text").toString()
                                    .section(QLatin1Char('\n'), 0, 0);
         const QString raw = firstTableCellRaw(header);
-        QCOMPARE(firstTableCellText(header), QStringLiteral("This is a test of how"));
+        QCOMPARE(firstTableCellText(header), QStringLiteral("this is a test of how"));
         QVERIFY2(raw.contains(QStringLiteral("of how")), qPrintable(raw));
         QVERIFY2(!raw.contains(QStringLiteral("of  how")), qPrintable(raw));
     }
@@ -1232,7 +1232,7 @@ private slots:
         const QString header = editor->property("text").toString()
                                    .section(QLatin1Char('\n'), 0, 0);
         const QString raw = firstTableCellRaw(header);
-        QCOMPARE(firstTableCellText(header), QStringLiteral("This is a test of  how"));
+        QCOMPARE(firstTableCellText(header), QStringLiteral("this is a test of  how"));
         QVERIFY2(raw.contains(QStringLiteral("of  how")), qPrintable(raw));
         QVERIFY2(!raw.contains(QStringLiteral("of   how")), qPrintable(raw));
     }
