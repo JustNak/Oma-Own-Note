@@ -1,4 +1,4 @@
-QT += core gui quick testlib
+QT += core gui gui-private quick testlib
 CONFIG += testcase c++17
 TEMPLATE = app
 TARGET = tst_oma_own_note

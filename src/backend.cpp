@@ -1,5 +1,8 @@
 #include "backend.h"
 
+#include "markdownhighlighter.h"
+#include "tablechrome.h"
+
 #include <QClipboard>
 #include <QColor>
 #include <QCoreApplication>
@@ -32,13 +35,39 @@
 #include <QWindow>
 
 #include <algorithm>
+#include <optional>
 
-#include "markdownhighlighter.h"
-#include "tablechrome.h"
+// QTextDocument::setUndoRedoEnabled(false) clears the stack. The private
+// undoEnabled flag is the only way to apply format-only caret restretch.
+#define private public
+#include <private/qtextdocument_p.h>
+#undef private
 
 constexpr qreal typoraLineHeightPercent = 140;
 const QString lastSaveDirectorySetting = QStringLiteral("file/lastSaveDirectory");
 const QString zoomPercentSetting = QStringLiteral("view/zoomPercent");
+
+namespace {
+class PauseDocumentUndo {
+public:
+    explicit PauseDocumentUndo(QTextDocument *document)
+        : m_priv(QTextDocumentPrivate::get(document))
+        , m_wasUndo(m_priv->undoEnabled)
+    {
+        m_priv->undoEnabled = false;
+    }
+    ~PauseDocumentUndo()
+    {
+        m_priv->undoEnabled = m_wasUndo;
+    }
+    PauseDocumentUndo(const PauseDocumentUndo &) = delete;
+    PauseDocumentUndo &operator=(const PauseDocumentUndo &) = delete;
+
+private:
+    QTextDocumentPrivate *m_priv;
+    bool m_wasUndo;
+};
+}
 
 static bool rangeNeedsTableTypography(QTextDocument *document, int position, int added);
 
@@ -835,23 +864,38 @@ void Backend::setTableCaretPosition(int tableCaretPosition) {
         return;
     m_tableCaretPosition = tableCaretPosition;
     emit tableCaretPositionChanged();
+    // Overlay wrap geometry follows the caret (padding spaces become visible).
+    // Typing already restretches via editorTextChanged; starting a new edit
+    // block here would split that undo join. Arrow/click does not change
+    // document text, so restretch the row heights to match the overlay.
+    if (m_document && !m_loading && !m_formattingTypography
+            && currentDocumentText() == m_lastDocumentText)
+        restretchTableTypography(false);
 }
 
-void Backend::restretchTableTypography() {
+void Backend::restretchTableTypography(bool recordUndo) {
     if (!m_document)
         return;
 
     // Wrap-width restretch is not a user edit. Do not join the previous
     // typing command (that made undo revert text and restore stale heights).
+    // Caret restretch must not record undo: a format-only command would
+    // intercept Ctrl+Z and leave overlay wrap out of sync with the document.
     const bool wasModified = m_document->isModified();
     m_formattingTypography = true;
+    std::optional<PauseDocumentUndo> pauseUndo;
+    if (!recordUndo)
+        pauseUndo.emplace(m_document);
     QTextCursor cursor(m_document);
-    cursor.beginEditBlock();
+    if (recordUndo)
+        cursor.beginEditBlock();
     const QHash<int, qreal> heights = TableChrome::dataRowHeights(
         m_document, m_tableWrapWidth, m_tableCaretPosition);
     for (QTextBlock block = m_document->begin(); block.isValid(); block = block.next())
         applyBlockLineHeight(cursor, block, heights);
-    cursor.endEditBlock();
+    if (recordUndo)
+        cursor.endEditBlock();
+    pauseUndo.reset();
     m_formattingTypography = false;
     m_document->setModified(wasModified);
 }

@@ -195,22 +195,36 @@ static qreal cellTextOffset(const QTextLayout &layout, const QFont &font,
     return qMax(qreal(0), (textRect.height() - cellLineHeight(layout, font)) * 0.5);
 }
 
+// Overflow shrinks every currently-widest column together down to the next
+// tier (or minInner). Dumping the whole extra onto one column crushed it to
+// a few characters while a slightly shorter sibling kept the row.
 static QVector<qreal> shrinkInners(QVector<qreal> inners, qreal minInner, qreal extra) {
     while (extra > 0.5) {
-        int widest = -1;
         qreal widestWidth = minInner;
-        for (int i = 0; i < inners.size(); ++i) {
-            if (inners.at(i) > widestWidth + 0.5) {
-                widestWidth = inners.at(i);
-                widest = i;
-            }
-        }
-        if (widest < 0)
+        for (qreal inner : inners)
+            widestWidth = qMax(widestWidth, inner);
+        if (widestWidth <= minInner + 0.5)
             break;
-        const qreal room = inners.at(widest) - minInner;
-        const qreal take = qMin(extra, room);
-        inners[widest] -= take;
-        extra -= take;
+
+        QVector<int> widest;
+        qreal nextWidth = minInner;
+        for (int i = 0; i < inners.size(); ++i) {
+            if (inners.at(i) > widestWidth - 0.5) {
+                widest.append(i);
+                continue;
+            }
+            nextWidth = qMax(nextWidth, inners.at(i));
+        }
+        if (widest.isEmpty())
+            break;
+
+        const qreal roomEach = widestWidth - nextWidth;
+        if (roomEach <= 0.5)
+            break;
+        const qreal takeEach = qMin(extra / widest.size(), roomEach);
+        for (int index : widest)
+            inners[index] -= takeEach;
+        extra -= takeEach * widest.size();
     }
     return inners;
 }

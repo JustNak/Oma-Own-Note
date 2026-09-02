@@ -122,7 +122,7 @@ private:
     void scheduleWordCount();
     void applyDocumentTypography();
     void reapplyTypographyToChange();
-    void restretchTableTypography();
+    void restretchTableTypography(bool recordUndo = true);
     void scheduleRecovery();
     void writeRecovery();
     void restoreRecovery();

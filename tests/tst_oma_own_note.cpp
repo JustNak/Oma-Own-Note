@@ -904,6 +904,145 @@ private slots:
         QCOMPARE(tables.first().columns.size(), 3);
     }
 
+    void tableLongColumnsShareWrapWidth() {
+        QTextDocument document;
+        QFont font(QStringLiteral("monospace"));
+        font.setStyleHint(QFont::Monospace);
+        font.setFixedPitch(true);
+        font.setPixelSize(16);
+        document.setDefaultFont(font);
+
+        const QFontMetricsF metrics(font);
+        const qreal wrapWidth = metrics.averageCharWidth() * 65;
+        const qreal spaceAdvance = qMax(qreal(1), metrics.horizontalAdvance(QLatin1Char(' ')));
+        const qreal pipeAdvance = qMax(qreal(1), metrics.horizontalAdvance(QLatin1Char('|')));
+        const qreal minInner = qMax(spaceAdvance * 3, metrics.averageCharWidth() * 3);
+        const qreal gutter = 2 * spaceAdvance + pipeAdvance;
+        const qreal minSpan = minInner + gutter;
+
+        document.setPlainText(QStringLiteral(
+            "| This is a test to see if the table itself is fixed | How else would this work though? I want to | |\n"
+            "| --- | --- | --- |\n"
+            "|  |  |  |\n"
+            "|  |  |  |\n"));
+        document.setTextWidth(wrapWidth);
+
+        const auto tables = TableChrome::collectTables(&document, wrapWidth);
+        QCOMPARE(tables.size(), 1);
+        const auto &box = tables.first();
+        QVERIFY2(box.bounds.width() <= wrapWidth + 1,
+                 qPrintable(QStringLiteral("table width %1 cap %2")
+                            .arg(box.bounds.width()).arg(wrapWidth)));
+        QCOMPARE(box.columns.size(), 4);
+        QVERIFY(box.rowEdges.size() >= 4);
+
+        const qreal col0 = box.columns.at(1) - box.columns.at(0);
+        const qreal col1 = box.columns.at(2) - box.columns.at(1);
+        const qreal col2 = box.columns.at(3) - box.columns.at(2);
+        QVERIFY2(qAbs(col0 - col1) < 4,
+                 qPrintable(QStringLiteral("long columns %1 vs %2").arg(col0).arg(col1)));
+        QVERIFY2(col0 > minSpan + spaceAdvance * 8,
+                 qPrintable(QStringLiteral("long column crushed to %1 min %2")
+                            .arg(col0).arg(minSpan)));
+        QVERIFY2(col1 > minSpan + spaceAdvance * 8,
+                 qPrintable(QStringLiteral("second long column crushed to %1 min %2")
+                            .arg(col1).arg(minSpan)));
+        QVERIFY2(qAbs(col2 - minSpan) < 4,
+                 qPrintable(QStringLiteral("empty column %1 min %2").arg(col2).arg(minSpan)));
+
+        const qreal headerH = box.rowEdges.at(1) - box.rowEdges.at(0);
+        const qreal bodyH = box.rowEdges.at(2) - box.rowEdges.at(1);
+        const qreal minRow = MarkdownHighlighter::tableDataRowLineHeight(font);
+        QVERIFY2(headerH > bodyH + 4,
+                 qPrintable(QStringLiteral("header %1 body %2").arg(headerH).arg(bodyH)));
+        QVERIFY2(qAbs(bodyH - minRow) <= 2,
+                 qPrintable(QStringLiteral("body %1 min %2").arg(bodyH).arg(minRow)));
+        QVERIFY2(headerH < minRow * 8,
+                 qPrintable(QStringLiteral("header tower %1 min %2").arg(headerH).arg(minRow)));
+    }
+
+    void tableCaretMoveRestretchesWrappedRow() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+        const QString text = QStringLiteral("| ") + QString(80, QLatin1Char('w'))
+            + QStringLiteral(" | ") + QString(40, QLatin1Char(' '))
+            + QStringLiteral(" |\n| --- | --- |\n| y | z |\n");
+        editor->setProperty("text", text);
+        editor->setProperty("cursorPosition", 0);
+
+        auto *quickDocument = qobject_cast<QQuickTextDocument *>(
+            qvariant_cast<QObject *>(editor->property("textDocument")));
+        QVERIFY(quickDocument);
+        QTextDocument *document = quickDocument->textDocument();
+        QVERIFY(document);
+
+        const qreal wrapWidth = 220;
+        backend.setTableWrapWidth(wrapWidth);
+        const int headerPos = document->begin().position();
+        const int paddingCaret = 2 + 80 + 3 + 20;
+        const QHash<int, qreal> outside = TableChrome::dataRowHeights(document, wrapWidth, -1);
+        const QHash<int, qreal> inside = TableChrome::dataRowHeights(
+            document, wrapWidth, paddingCaret);
+        QVERIFY(inside.contains(headerPos));
+        QVERIFY2(inside.value(headerPos) > outside.value(headerPos) + 4,
+                 qPrintable(QStringLiteral("caret wrap %1 vs outside %2")
+                            .arg(inside.value(headerPos)).arg(outside.value(headerPos))));
+
+        QCOMPARE(document->begin().blockFormat().lineHeight(),
+                 outside.value(headerPos));
+
+        backend.setTableCaretPosition(paddingCaret);
+        QCOMPARE(document->begin().blockFormat().lineHeight(),
+                 inside.value(headerPos));
+    }
+
+    void tableCaretRestretchKeepsTypingUndo() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+        const QString text = QStringLiteral("| ") + QString(80, QLatin1Char('w'))
+            + QStringLiteral(" | ") + QString(40, QLatin1Char(' '))
+            + QStringLiteral(" |\n| --- | --- |\n| y | z |\n");
+        editor->setProperty("text", text);
+        editor->setProperty("cursorPosition", 2);
+        QVERIFY(QMetaObject::invokeMethod(editor, "forceActiveFocus"));
+        backend.setTableWrapWidth(220);
+
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
+        QVERIFY(quickWindow);
+        QTest::keyClick(quickWindow, Qt::Key_A);
+        QVERIFY(editor->property("text").toString().contains(QLatin1Char('a')));
+
+        const int paddingCaret = 2 + 80 + 3 + 20;
+        backend.setTableCaretPosition(paddingCaret);
+        QVERIFY(editor->property("text").toString().contains(QLatin1Char('a')));
+
+        QTest::keyClick(quickWindow, Qt::Key_Z, Qt::ControlModifier);
+        QVERIFY2(!editor->property("text").toString().contains(QLatin1Char('a')),
+                 "caret restretch must not intercept the typing undo command");
+    }
+
     void tableSiblingColumnsGrowTogether() {
         QTextDocument document;
         QFont font(QStringLiteral("monospace"));
