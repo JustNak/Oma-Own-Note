@@ -760,10 +760,17 @@ ApplicationWindow {
                          && overlayRect.height > 0
                 width: 1 / Math.max(canvas.scale, 0.01)
                 color: win.strongTextColor
-                x: editor.x + overlayRect.x
-                y: editor.y + overlayRect.y
+                // Snap to the post-zoom device grid so a 1px bar does not
+                // straddle two device pixels and blur into a 2px bar at
+                // fractional zoom levels.
+                x: snapToDevice(editor.x + overlayRect.x)
+                y: snapToDevice(editor.y + overlayRect.y)
                 height: overlayRect.height
                 z: 2
+                function snapToDevice(value) {
+                    var unit = Math.max(canvas.scale, 0.01) * Screen.devicePixelRatio;
+                    return Math.round(value * unit) / unit;
+                }
                 readonly property rect overlayRect: {
                     var _rev = tableChrome.layoutRevision;
                     return tableChrome.caretRect(editor.cursorPosition);
@@ -1075,6 +1082,7 @@ ApplicationWindow {
                             return;
                         }
                         if (event.text === "|") {
+                            EditorMutations.tableInsertPipe(editor);
                             event.accepted = true;
                             return;
                         }

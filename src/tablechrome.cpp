@@ -119,6 +119,20 @@ static void prepareCellLayout(QTextLayout *layout, const QString &text,
     layout->endLayout();
 }
 
+// An empty cell lays out no lines, so its bounding rect is zero-height. Treat
+// it as a single line of the cell font so the caret and text origin are
+// centred like a one-line cell instead of collapsing to the row's midpoint.
+static qreal cellLineHeight(const QTextLayout &layout, const QFont &font) {
+    if (layout.lineCount() > 0)
+        return layout.boundingRect().height();
+    return QFontMetricsF(font).height();
+}
+
+static qreal cellTextOffset(const QTextLayout &layout, const QFont &font,
+                            const QRectF &textRect) {
+    return qMax(qreal(0), (textRect.height() - cellLineHeight(layout, font)) * 0.5);
+}
+
 static QVector<qreal> shrinkInners(QVector<qreal> inners, qreal minInner, qreal extra) {
     while (extra > 0.5) {
         int widest = -1;
@@ -253,10 +267,17 @@ QVector<TableChrome::TableGeom> TableChrome::buildGeometries(QTextDocument *docu
             }
             rowHeights.append(rowHeight);
             y += rowHeight;
+            // The collapsed separator block still occupies its fixed line
+            // height between the header and the first body block. Fold it
+            // into the header row's edge so body hairlines land on the body
+            // blocks instead of drifting above them.
+            if (header.isValid() && dataRows.at(r).position() == header.position())
+                y += MarkdownHighlighter::tableSeparatorLineHeight;
             rowEdges.append(y);
         }
 
         TableGeom geom;
+        geom.rowHeights = rowHeights;
         geom.box.columns = columnXs;
         geom.box.rowEdges = rowEdges;
         geom.box.bounds = QRectF(QPointF(columnXs.first(), rowEdges.first()),
@@ -331,10 +352,8 @@ QHash<int, qreal> TableChrome::dataRowHeights(QTextDocument *document, qreal wra
     QHash<int, qreal> heights;
     const QVector<TableGeom> geoms = buildGeometries(document, wrapWidth);
     for (const TableGeom &geom : geoms) {
-        for (int i = 0; i < geom.rowBlockPositions.size(); ++i) {
-            const qreal height = geom.box.rowEdges.at(i + 1) - geom.box.rowEdges.at(i);
-            heights.insert(geom.rowBlockPositions.at(i), height);
-        }
+        for (int i = 0; i < geom.rowBlockPositions.size(); ++i)
+            heights.insert(geom.rowBlockPositions.at(i), geom.rowHeights.at(i));
     }
     return heights;
 }
@@ -412,12 +431,10 @@ void TableChrome::paintCellText(QPainter *painter, const TableGeom &geom,
         if (cell.text.isEmpty() && selFrom == selTo)
             continue;
 
+        const QFont &cellFont = cell.header ? headerFont : font;
         QTextLayout cellLayout;
-        prepareCellLayout(&cellLayout, cell.text,
-                          cell.header ? headerFont : font,
-                          cell.textRect.width());
-        const qreal layoutHeight = cellLayout.boundingRect().height();
-        const qreal yOff = qMax(qreal(0), (cell.textRect.height() - layoutHeight) * 0.5);
+        prepareCellLayout(&cellLayout, cell.text, cellFont, cell.textRect.width());
+        const qreal yOff = cellTextOffset(cellLayout, cellFont, cell.textRect);
         const QPointF origin(cell.textRect.left(), cell.textRect.top() + yOff);
 
         QList<QTextLayout::FormatRange> ranges;
@@ -768,8 +785,7 @@ int TableChrome::hitTest(qreal x, qreal y) const {
         font.setBold(true);
     QTextLayout layout;
     prepareCellLayout(&layout, cell->text, font, cell->textRect.width());
-    const qreal layoutHeight = layout.boundingRect().height();
-    const qreal yOff = qMax(qreal(0), (cell->textRect.height() - layoutHeight) * 0.5);
+    const qreal yOff = cellTextOffset(layout, font, cell->textRect);
     const qreal localX = x - cell->textRect.left();
     const qreal localY = y - cell->textRect.top() - yOff;
 
@@ -806,14 +822,12 @@ QRectF TableChrome::caretRect(int position) const {
         font.setBold(true);
     QTextLayout layout;
     prepareCellLayout(&layout, cell->text, font, cell->textRect.width());
-    const qreal layoutHeight = layout.boundingRect().height();
-    const qreal yOff = qMax(qreal(0), (cell->textRect.height() - layoutHeight) * 0.5);
+    const qreal yOff = cellTextOffset(layout, font, cell->textRect);
     const int offset = qBound(0, position - start, cell->text.size());
 
     qreal caretX = cell->textRect.left();
     qreal caretY = cell->textRect.top() + yOff;
-    qreal caretH = MarkdownHighlighter::tableDataRowLineHeight(
-        m_document ? m_document->defaultFont() : QFont());
+    qreal caretH = cellLineHeight(layout, font);
     if (layout.lineCount() > 0) {
         const QTextLine line = layout.lineForTextPosition(offset);
         if (line.isValid()) {

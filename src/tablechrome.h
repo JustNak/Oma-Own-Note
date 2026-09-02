@@ -131,6 +131,9 @@ private:
         TableBox box;
         QVector<CellGeom> cells;
         QVector<int> rowBlockPositions;
+        // Block line heights per data row. Unlike rowEdges these exclude the
+        // separator line folded into the header's edge.
+        QVector<qreal> rowHeights;
     };
 
     void bindDocument(QTextDocument *document);
