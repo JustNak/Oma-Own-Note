@@ -934,6 +934,42 @@ private slots:
         QVERIFY(MarkdownHighlighter::isTableRow(header));
     }
 
+    void tableTypingKeepsLetterOrder() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+        const QString original = QStringLiteral("|     |     |\n| --- | --- |\n|     |     |");
+        editor->setProperty("text", original);
+        editor->setProperty("cursorPosition", 2);
+        QVERIFY(QMetaObject::invokeMethod(editor, "forceActiveFocus"));
+
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
+        QVERIFY(quickWindow);
+        QTest::keyClicks(quickWindow, QStringLiteral("This"));
+
+        const QString text = editor->property("text").toString();
+        const QString header = text.section(QLatin1Char('\n'), 0, 0);
+        QVERIFY2(header.contains(QStringLiteral("This")), qPrintable(header));
+        QVERIFY2(!header.contains(QStringLiteral("hisT")), qPrintable(header));
+        QVERIFY2(!header.contains(QStringLiteral("sihT")), qPrintable(header));
+        QCOMPARE(header.count(QLatin1Char('|')), 3);
+        QVERIFY(MarkdownHighlighter::isTableRow(header));
+
+        const int typed = text.indexOf(QStringLiteral("This"));
+        QVERIFY(typed >= 0);
+        QCOMPARE(editor->property("cursorPosition").toInt(), typed + 4);
+    }
+
     void tableEnterDoesNotSplitRow() {
         const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
         QVERIFY(!mainQmlPath.isEmpty());

@@ -930,6 +930,21 @@ function confineTableCaret(editor) {
     return true;
 }
 
+function tableInsertText(editor, inserted) {
+    if (!inserted)
+        return false;
+    if (!confineTableCaret(editor))
+        return false;
+    var start = Math.min(editor.selectionStart, editor.selectionEnd);
+    var end = Math.max(editor.selectionStart, editor.selectionEnd);
+    var written = replaceRange(editor, start, end, inserted);
+    // Pin the caret after the inserted text. Collapsed table source can make
+    // TextEdit remap the visual cursor onto the leading pipe, which would
+    // otherwise put the next keystroke in front of this one.
+    editor.cursorPosition = start + written.length;
+    return true;
+}
+
 function nextInsideTablePosition(text, position, direction) {
     var info = tableCellAt(text, position);
     if (!info)

@@ -1090,7 +1090,6 @@ ApplicationWindow {
                         || EditorMutations.isSeparatorRow(
                             EditorMutations.lineBounds(editor.text, editor.cursorPosition).line);
                     if (inTable && !commandModifier) {
-                        EditorMutations.confineTableCaret(editor);
                         if (returnKey) {
                             EditorMutations.tableReturn(editor);
                             event.accepted = true;
@@ -1112,6 +1111,7 @@ ApplicationWindow {
                             return;
                         }
                         if (event.key === Qt.Key_Right || event.key === Qt.Key_Left) {
+                            EditorMutations.confineTableCaret(editor);
                             var tableStep = event.key === Qt.Key_Right ? 1 : -1;
                             var nextPos = EditorMutations.nextInsideTablePosition(
                                 editor.text, editor.cursorPosition, tableStep);
@@ -1122,6 +1122,19 @@ ApplicationWindow {
                                 else
                                     EditorMutations.moveInsideTable(editor, tableStep);
                             }
+                            event.accepted = true;
+                            return;
+                        }
+                        // Insert at the logical cell offset. Qt's visual caret on
+                        // collapsed table source otherwise puts the first letter
+                        // at the right pad and the rest in front of it ("hisT").
+                        if (event.text.length > 0
+                                && event.text !== "\n" && event.text !== "\r"
+                                && event.text !== "\t"
+                                && event.key !== Qt.Key_Escape
+                                && event.key !== Qt.Key_Tab
+                                && event.key !== Qt.Key_Backtab) {
+                            EditorMutations.tableInsertText(editor, event.text);
                             event.accepted = true;
                             return;
                         }
@@ -1176,11 +1189,6 @@ ApplicationWindow {
                     font.family: editor.font.family
                     font.pixelSize: editor.font.pixelSize
                     font.weight: editor.font.weight
-                }
-
-                onCursorPositionChanged: {
-                    if (tableChrome.positionInTable(cursorPosition))
-                        EditorMutations.confineTableCaret(editor);
                 }
 
                 Component.onCompleted: {
