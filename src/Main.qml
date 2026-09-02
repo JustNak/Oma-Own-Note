@@ -1100,14 +1100,12 @@ ApplicationWindow {
                             event.accepted = true;
                             return;
                         }
-                        if (event.key === Qt.Key_Backspace
-                                && EditorMutations.tableBackspace(editor)) {
-                            event.accepted = true;
+                        if (event.key === Qt.Key_Backspace) {
+                            event.accepted = EditorMutations.tableBackspace(editor);
                             return;
                         }
-                        if (event.key === Qt.Key_Delete
-                                && EditorMutations.tableDelete(editor)) {
-                            event.accepted = true;
+                        if (event.key === Qt.Key_Delete) {
+                            event.accepted = EditorMutations.tableDelete(editor);
                             return;
                         }
                         if (event.key === Qt.Key_Right || event.key === Qt.Key_Left) {
@@ -1128,15 +1126,29 @@ ApplicationWindow {
                         // Insert at the logical cell offset. Qt's visual caret on
                         // collapsed table source otherwise puts the first letter
                         // at the right pad and the rest in front of it ("hisT").
+                        // Skip control keys/text: on Linux Backspace/Delete still
+                        // have event.text ("\b" / "\x7f"), and tableBackspace
+                        // returning false used to fall through and insert them.
                         if (event.text.length > 0
-                                && event.text !== "\n" && event.text !== "\r"
-                                && event.text !== "\t"
+                                && event.key !== Qt.Key_Backspace
+                                && event.key !== Qt.Key_Delete
                                 && event.key !== Qt.Key_Escape
                                 && event.key !== Qt.Key_Tab
-                                && event.key !== Qt.Key_Backtab) {
-                            EditorMutations.tableInsertText(editor, event.text);
-                            event.accepted = true;
-                            return;
+                                && event.key !== Qt.Key_Backtab
+                                && event.key !== Qt.Key_Return
+                                && event.key !== Qt.Key_Enter) {
+                            var printable = true;
+                            for (var i = 0; i < event.text.length; i++) {
+                                if (event.text.charCodeAt(i) < 32) {
+                                    printable = false;
+                                    break;
+                                }
+                            }
+                            if (printable) {
+                                EditorMutations.tableInsertText(editor, event.text);
+                                event.accepted = true;
+                                return;
+                            }
                         }
                     }
                     if (returnKey && !commandModifier) {

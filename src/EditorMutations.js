@@ -930,17 +930,50 @@ function confineTableCaret(editor) {
     return true;
 }
 
+function tableTypingSpan(info) {
+    var cell = info.cells[info.cellIndex];
+    var left = info.lineStart + cell.start;
+    var right = info.lineStart + cell.end;
+    if (left < right) {
+        var first = info.line.charAt(cell.start);
+        if (first === " " || first === "\t")
+            left++;
+    }
+    return { start: left, end: right };
+}
+
+function tableCellIsBlank(info) {
+    var cell = info.cells[info.cellIndex];
+    return info.line.slice(cell.start, cell.end).trim().length === 0;
+}
+
 function tableInsertText(editor, inserted) {
     if (!inserted)
         return false;
-    if (!confineTableCaret(editor))
-        return false;
+    var info = tableCellAt(editor.text, editor.cursorPosition);
+    if (!info) {
+        if (!confineTableCaret(editor))
+            return false;
+        info = tableCellAt(editor.text, editor.cursorPosition);
+        if (!info)
+            return false;
+    }
+    // Use the raw cell interior, not trimmed content. confineTableCaret snaps
+    // to the trimmed span, so a trailing typed space would be skipped and the
+    // next letter would land on it ("hello world" → "helloworld").
+    var span = tableTypingSpan(info);
     var start = Math.min(editor.selectionStart, editor.selectionEnd);
     var end = Math.max(editor.selectionStart, editor.selectionEnd);
+    if (start === end) {
+        var pos = Math.max(span.start, Math.min(span.end, editor.cursorPosition));
+        if (pos === span.end && tableCellIsBlank(info))
+            pos = span.start;
+        start = end = pos;
+    } else {
+        start = Math.max(span.start, Math.min(span.end, start));
+        end = Math.max(start, Math.min(span.end, end));
+    }
     var written = replaceRange(editor, start, end, inserted);
-    // Pin the caret after the inserted text. Collapsed table source can make
-    // TextEdit remap the visual cursor onto the leading pipe, which would
-    // otherwise put the next keystroke in front of this one.
     editor.cursorPosition = start + written.length;
     return true;
 }
