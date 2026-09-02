@@ -1007,6 +1007,42 @@ private slots:
                  inside.value(headerPos));
     }
 
+    void tableCaretRestretchKeepsTypingUndo() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+        const QString text = QStringLiteral("| ") + QString(80, QLatin1Char('w'))
+            + QStringLiteral(" | ") + QString(40, QLatin1Char(' '))
+            + QStringLiteral(" |\n| --- | --- |\n| y | z |\n");
+        editor->setProperty("text", text);
+        editor->setProperty("cursorPosition", 2);
+        QVERIFY(QMetaObject::invokeMethod(editor, "forceActiveFocus"));
+        backend.setTableWrapWidth(220);
+
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
+        QVERIFY(quickWindow);
+        QTest::keyClick(quickWindow, Qt::Key_A);
+        QVERIFY(editor->property("text").toString().contains(QLatin1Char('a')));
+
+        const int paddingCaret = 2 + 80 + 3 + 20;
+        backend.setTableCaretPosition(paddingCaret);
+        QVERIFY(editor->property("text").toString().contains(QLatin1Char('a')));
+
+        QTest::keyClick(quickWindow, Qt::Key_Z, Qt::ControlModifier);
+        QVERIFY2(!editor->property("text").toString().contains(QLatin1Char('a')),
+                 "caret restretch must not intercept the typing undo command");
+    }
+
     void tableSiblingColumnsGrowTogether() {
         QTextDocument document;
         QFont font(QStringLiteral("monospace"));

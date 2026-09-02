@@ -1,5 +1,10 @@
 #include "backend.h"
 
+#include "markdownhighlighter.h"
+#include "tablechrome.h"
+
+#include <private/qtextdocument_p.h>
+
 #include <QClipboard>
 #include <QColor>
 #include <QCoreApplication>
@@ -32,9 +37,6 @@
 #include <QWindow>
 
 #include <algorithm>
-
-#include "markdownhighlighter.h"
-#include "tablechrome.h"
 
 constexpr qreal typoraLineHeightPercent = 140;
 const QString lastSaveDirectorySetting = QStringLiteral("file/lastSaveDirectory");
@@ -841,24 +843,39 @@ void Backend::setTableCaretPosition(int tableCaretPosition) {
     // document text, so restretch the row heights to match the overlay.
     if (m_document && !m_loading && !m_formattingTypography
             && currentDocumentText() == m_lastDocumentText)
-        restretchTableTypography();
+        restretchTableTypography(false);
 }
 
-void Backend::restretchTableTypography() {
+void Backend::restretchTableTypography(bool recordUndo) {
     if (!m_document)
         return;
 
     // Wrap-width restretch is not a user edit. Do not join the previous
     // typing command (that made undo revert text and restore stale heights).
+    // Caret restretch must not record undo: a format-only command would
+    // intercept Ctrl+Z and leave overlay wrap out of sync with the document.
+    // QTextDocument::setUndoRedoEnabled(false) clears the stack, so poke the
+    // private flag instead.
     const bool wasModified = m_document->isModified();
     m_formattingTypography = true;
+    QTextDocumentPrivate *priv = nullptr;
+    bool wasUndo = true;
+    if (!recordUndo) {
+        priv = QTextDocumentPrivate::get(m_document);
+        wasUndo = priv->undoEnabled;
+        priv->undoEnabled = false;
+    }
     QTextCursor cursor(m_document);
-    cursor.beginEditBlock();
+    if (recordUndo)
+        cursor.beginEditBlock();
     const QHash<int, qreal> heights = TableChrome::dataRowHeights(
         m_document, m_tableWrapWidth, m_tableCaretPosition);
     for (QTextBlock block = m_document->begin(); block.isValid(); block = block.next())
         applyBlockLineHeight(cursor, block, heights);
-    cursor.endEditBlock();
+    if (recordUndo)
+        cursor.endEditBlock();
+    if (priv)
+        priv->undoEnabled = wasUndo;
     m_formattingTypography = false;
     m_document->setModified(wasModified);
 }
