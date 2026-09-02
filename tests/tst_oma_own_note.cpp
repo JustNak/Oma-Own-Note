@@ -38,6 +38,17 @@ static QString firstTableCellText(const QString &line)
     return firstTableCellRaw(line).trimmed();
 }
 
+static int spacesAfterWord(const QString &raw, const QString &word)
+{
+    const int at = raw.indexOf(word);
+    if (at < 0)
+        return -1;
+    int n = 0;
+    for (int i = at + word.size(); i < raw.size() && raw.at(i).isSpace(); ++i)
+        ++n;
+    return n;
+}
+
 static void typeIntoWindow(QQuickWindow *window, const QString &text)
 {
     for (const QChar ch : text) {
@@ -1076,14 +1087,22 @@ private slots:
         auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
         QVERIFY(quickWindow);
         typeIntoWindow(quickWindow, QStringLiteral("hello "));
+
+        const QString before = editor->property("text").toString()
+                                   .section(QLatin1Char('\n'), 0, 0);
+        const QString rawBefore = firstTableCellRaw(before);
+        QCOMPARE(firstTableCellText(before), QStringLiteral("hello"));
+        const int spacesBefore = spacesAfterWord(rawBefore, QStringLiteral("hello"));
+        QVERIFY(spacesBefore >= 1);
+
         QTest::keyClick(quickWindow, Qt::Key_Backspace);
 
         const QString header = editor->property("text").toString()
                                    .section(QLatin1Char('\n'), 0, 0);
         const QString raw = firstTableCellRaw(header);
+        // The bug deleted the last letter and left the space ("hell ").
         QCOMPARE(firstTableCellText(header), QStringLiteral("hello"));
-        QVERIFY2(!raw.contains(QStringLiteral("hello ")), qPrintable(raw));
-        QVERIFY2(!raw.contains(QStringLiteral("hell ")), qPrintable(raw));
+        QCOMPARE(spacesAfterWord(raw, QStringLiteral("hello")), spacesBefore - 1);
     }
 
     void tableDeleteRemovesTrailingSpace() {
@@ -1110,6 +1129,10 @@ private slots:
         typeIntoWindow(quickWindow, QStringLiteral("hello "));
 
         const QString typed = editor->property("text").toString();
+        const QString before = typed.section(QLatin1Char('\n'), 0, 0);
+        const QString rawBefore = firstTableCellRaw(before);
+        const int spacesBefore = spacesAfterWord(rawBefore, QStringLiteral("hello"));
+        QVERIFY(spacesBefore >= 1);
         const int hello = typed.indexOf(QStringLiteral("hello"));
         QVERIFY(hello >= 0);
         editor->setProperty("cursorPosition", hello + 5);
@@ -1120,7 +1143,7 @@ private slots:
                                    .section(QLatin1Char('\n'), 0, 0);
         const QString raw = firstTableCellRaw(header);
         QCOMPARE(firstTableCellText(header), QStringLiteral("hello"));
-        QVERIFY2(!raw.contains(QStringLiteral("hello ")), qPrintable(raw));
+        QCOMPARE(spacesAfterWord(raw, QStringLiteral("hello")), spacesBefore - 1);
     }
 
     void tableEnterDoesNotSplitRow() {
