@@ -84,19 +84,25 @@ static void contentSpan(const QString &line, const MarkdownHighlighter::Span &ce
 
 // Pretty-print padding stays hidden, but spaces at or before the caret are
 // real cell text so a typed trailing space stays visible and the overlay
-// caret can sit in it.
+// caret can sit in it. The closing `|` is inside the typing span; it is not
+// a typed space, so a caret there must not unhide unused padding.
+static int visibleEndForCursor(int contentEnd, int typingStart, int typingEnd,
+                               int blockPosition, int cursorPosition) {
+    if (cursorPosition < 0)
+        return contentEnd;
+    const int absStart = blockPosition + typingStart;
+    const int absEnd = blockPosition + typingEnd;
+    if (cursorPosition < absStart || cursorPosition >= absEnd)
+        return contentEnd;
+    const int cursorInLine = cursorPosition - blockPosition;
+    return qBound(typingStart, qMax(contentEnd, cursorInLine), typingEnd);
+}
+
 static QString visibleCellText(const QString &line, int contentStart, int contentEnd,
                                int typingStart, int typingEnd,
                                int blockPosition, int cursorPosition) {
-    int visibleEnd = contentEnd;
-    if (cursorPosition >= 0) {
-        const int absStart = blockPosition + typingStart;
-        const int absEnd = blockPosition + typingEnd;
-        if (cursorPosition >= absStart && cursorPosition <= absEnd) {
-            const int cursorInLine = cursorPosition - blockPosition;
-            visibleEnd = qBound(typingStart, qMax(contentEnd, cursorInLine), typingEnd);
-        }
-    }
+    const int visibleEnd = visibleEndForCursor(contentEnd, typingStart, typingEnd,
+                                               blockPosition, cursorPosition);
     if (visibleEnd <= contentStart)
         return {};
     return line.mid(contentStart, visibleEnd - contentStart);
@@ -886,12 +892,12 @@ QRectF TableChrome::caretRect(int position) const {
 
     QString text = cell->text;
     int offset = qBound(0, position - start, text.size());
-    if (position > start + text.size() && position <= typingEnd && m_document) {
+    if (position > start + text.size() && position < typingEnd && m_document) {
         const QTextBlock block = m_document->findBlock(cell->blockPosition);
         if (block.isValid()) {
-            const int visEnd = qBound(cell->typingStart,
-                                      qMax(cell->contentEnd, position - cell->blockPosition),
-                                      cell->typingEnd);
+            const int visEnd = visibleEndForCursor(cell->contentEnd, cell->typingStart,
+                                                   cell->typingEnd, cell->blockPosition,
+                                                   position);
             text = block.text().mid(cell->contentStart, visEnd - cell->contentStart);
             offset = qBound(0, position - start, text.size());
         }

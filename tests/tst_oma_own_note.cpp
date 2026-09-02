@@ -1465,6 +1465,43 @@ private slots:
                             .arg(caret.top() - rowTop).arg(filled.top() - headerTop)));
     }
 
+    void tableCaretAtPipeHidesPadding() {
+        QTextDocument document;
+        QFont font(QStringLiteral("monospace"));
+        font.setStyleHint(QFont::Monospace);
+        font.setFixedPitch(true);
+        font.setPixelSize(16);
+        document.setDefaultFont(font);
+        const QString text = QStringLiteral("| hello     |\n| --- | --- |\n|     |     |\n");
+        document.setPlainText(text);
+        document.setTextWidth(400);
+        TableChrome chrome;
+        chrome.setTextDocument(&document);
+        chrome.setWrapWidth(400);
+
+        const int hello = text.indexOf(QStringLiteral("hello"));
+        QVERIFY(hello >= 0);
+        const int pipe = text.indexOf(QLatin1Char('|'), hello);
+        QVERIFY(pipe > hello);
+
+        chrome.setCursorPosition(hello + 5);
+        const QRectF atWord = chrome.caretRect(hello + 5);
+        chrome.setCursorPosition(hello + 6);
+        const QRectF atPad = chrome.caretRect(hello + 6);
+        chrome.setCursorPosition(pipe);
+        const QRectF atPipe = chrome.caretRect(pipe);
+
+        QVERIFY(atWord.height() > 0);
+        QVERIFY(atPad.height() > 0);
+        QVERIFY(atPipe.height() > 0);
+        QVERIFY2(atPad.x() > atWord.x() + 0.5,
+                 qPrintable(QStringLiteral("pad caret %1 vs word caret %2")
+                            .arg(atPad.x()).arg(atWord.x())));
+        QVERIFY2(qAbs(atPipe.x() - atWord.x()) <= 1.0,
+                 qPrintable(QStringLiteral("pipe caret %1 vs word caret %2")
+                            .arg(atPipe.x()).arg(atWord.x())));
+    }
+
     void tablePipeAppendsCell() {
         const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
         QVERIFY(!mainQmlPath.isEmpty());
