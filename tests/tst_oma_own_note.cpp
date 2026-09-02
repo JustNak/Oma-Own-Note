@@ -961,6 +961,52 @@ private slots:
                  qPrintable(QStringLiteral("header tower %1 min %2").arg(headerH).arg(minRow)));
     }
 
+    void tableCaretMoveRestretchesWrappedRow() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+        const QString text = QStringLiteral("| ") + QString(80, QLatin1Char('w'))
+            + QStringLiteral(" | ") + QString(40, QLatin1Char(' '))
+            + QStringLiteral(" |\n| --- | --- |\n| y | z |\n");
+        editor->setProperty("text", text);
+        editor->setProperty("cursorPosition", 0);
+
+        auto *quickDocument = qobject_cast<QQuickTextDocument *>(
+            qvariant_cast<QObject *>(editor->property("textDocument")));
+        QVERIFY(quickDocument);
+        QTextDocument *document = quickDocument->textDocument();
+        QVERIFY(document);
+
+        const qreal wrapWidth = 220;
+        backend.setTableWrapWidth(wrapWidth);
+        const int headerPos = document->begin().position();
+        const int paddingCaret = 2 + 80 + 3 + 20;
+        const QHash<int, qreal> outside = TableChrome::dataRowHeights(document, wrapWidth, -1);
+        const QHash<int, qreal> inside = TableChrome::dataRowHeights(
+            document, wrapWidth, paddingCaret);
+        QVERIFY(inside.contains(headerPos));
+        QVERIFY2(inside.value(headerPos) > outside.value(headerPos) + 4,
+                 qPrintable(QStringLiteral("caret wrap %1 vs outside %2")
+                            .arg(inside.value(headerPos)).arg(outside.value(headerPos))));
+
+        QCOMPARE(document->begin().blockFormat().lineHeight(),
+                 outside.value(headerPos));
+
+        backend.setTableCaretPosition(paddingCaret);
+        QCOMPARE(document->begin().blockFormat().lineHeight(),
+                 inside.value(headerPos));
+    }
+
     void tableSiblingColumnsGrowTogether() {
         QTextDocument document;
         QFont font(QStringLiteral("monospace"));

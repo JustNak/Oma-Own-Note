@@ -835,6 +835,13 @@ void Backend::setTableCaretPosition(int tableCaretPosition) {
         return;
     m_tableCaretPosition = tableCaretPosition;
     emit tableCaretPositionChanged();
+    // Overlay wrap geometry follows the caret (padding spaces become visible).
+    // Typing already restretches via editorTextChanged; starting a new edit
+    // block here would split that undo join. Arrow/click does not change
+    // document text, so restretch the row heights to match the overlay.
+    if (m_document && !m_loading && !m_formattingTypography
+            && currentDocumentText() == m_lastDocumentText)
+        restretchTableTypography();
 }
 
 void Backend::restretchTableTypography() {
