@@ -955,17 +955,23 @@ private slots:
 
         auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
         QVERIFY(quickWindow);
-        QTest::keyClicks(quickWindow, QStringLiteral("This"));
+        // QTest::keyClick on QQuickWindow does not put Shift into event.text,
+        // so this uses the same four-letter sequence as the "This" / "hisT"
+        // report (first letter ending up at the right of the cell).
+        QTest::keyClick(quickWindow, Qt::Key_T);
+        QTest::keyClick(quickWindow, Qt::Key_H);
+        QTest::keyClick(quickWindow, Qt::Key_I);
+        QTest::keyClick(quickWindow, Qt::Key_S);
 
         const QString text = editor->property("text").toString();
         const QString header = text.section(QLatin1Char('\n'), 0, 0);
-        QVERIFY2(header.contains(QStringLiteral("This")), qPrintable(header));
-        QVERIFY2(!header.contains(QStringLiteral("hisT")), qPrintable(header));
-        QVERIFY2(!header.contains(QStringLiteral("sihT")), qPrintable(header));
+        QVERIFY2(header.contains(QStringLiteral("this")), qPrintable(header));
+        QVERIFY2(!header.contains(QStringLiteral("hist")), qPrintable(header));
+        QVERIFY2(!header.contains(QStringLiteral("siht")), qPrintable(header));
         QCOMPARE(header.count(QLatin1Char('|')), 3);
         QVERIFY(MarkdownHighlighter::isTableRow(header));
 
-        const int typed = text.indexOf(QStringLiteral("This"));
+        const int typed = text.indexOf(QStringLiteral("this"));
         QVERIFY(typed >= 0);
         QCOMPARE(editor->property("cursorPosition").toInt(), typed + 4);
     }
