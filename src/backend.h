@@ -33,6 +33,8 @@ class Backend : public QObject {
     Q_PROPERTY(QString themeSelection READ themeSelection NOTIFY themeColorsChanged)
     Q_PROPERTY(qreal tableWrapWidth READ tableWrapWidth WRITE setTableWrapWidth
                NOTIFY tableWrapWidthChanged)
+    Q_PROPERTY(int tableCaretPosition READ tableCaretPosition WRITE setTableCaretPosition
+               NOTIFY tableCaretPositionChanged)
 
 public:
     explicit Backend(QObject *parent = nullptr);
@@ -87,6 +89,8 @@ public:
 
     qreal tableWrapWidth() const { return m_tableWrapWidth; }
     void setTableWrapWidth(qreal tableWrapWidth);
+    int tableCaretPosition() const { return m_tableCaretPosition; }
+    void setTableCaretPosition(int tableCaretPosition);
 
 signals:
     void fileUrlChanged();
@@ -98,6 +102,7 @@ signals:
     void zoomFactorChanged();
     void themeColorsChanged();
     void tableWrapWidthChanged();
+    void tableCaretPositionChanged();
     void closeAfterSave();
     void openDialogRequested();
     void saveDialogRequested(const QUrl &suggestedUrl);
@@ -140,6 +145,7 @@ private:
     bool m_closeAfterSave = false;
     bool m_formattingTypography = false;
     qreal m_tableWrapWidth = 0;
+    int m_tableCaretPosition = 0;
     int m_formattedBlockCount = 0;
     int m_lastChangePos = 0;
     int m_lastChangeAdded = 0;

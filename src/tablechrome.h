@@ -52,9 +52,11 @@ public:
                             const QColor &paper, const QColor &text,
                             const QColor &rule, qreal wrapWidth,
                             int selectionStart = 0, int selectionEnd = 0,
-                            const QColor &selectionColor = QColor());
+                            const QColor &selectionColor = QColor(),
+                            int cursorPosition = -1);
     static qreal naturalWidthOf(QTextDocument *document);
-    static QHash<int, qreal> dataRowHeights(QTextDocument *document, qreal wrapWidth);
+    static QHash<int, qreal> dataRowHeights(QTextDocument *document, qreal wrapWidth,
+                                            int cursorPosition = -1);
 
     QObject *textDocument() const { return m_textDocumentObject; }
     void setTextDocument(QObject *textDocument);
@@ -121,6 +123,8 @@ private:
         int blockPosition = 0;
         int contentStart = 0;
         int contentEnd = 0;
+        int typingStart = 0;
+        int typingEnd = 0;
         QRectF rect;
         QRectF textRect;
         QString text;
@@ -142,7 +146,8 @@ private:
     void markLayoutDirty();
     void ensureLayout() const;
     const CellGeom *cellAtPosition(int position) const;
-    static QVector<TableGeom> buildGeometries(QTextDocument *document, qreal wrapWidth);
+    static QVector<TableGeom> buildGeometries(QTextDocument *document, qreal wrapWidth,
+                                              int cursorPosition = -1);
     static void paintCellText(QPainter *painter, const TableGeom &geom,
                               const QFont &font, const QColor &textColor,
                               const QColor &selectionColor,

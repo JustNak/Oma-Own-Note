@@ -830,6 +830,13 @@ void Backend::setTableWrapWidth(qreal tableWrapWidth) {
         restretchTableTypography();
 }
 
+void Backend::setTableCaretPosition(int tableCaretPosition) {
+    if (m_tableCaretPosition == tableCaretPosition)
+        return;
+    m_tableCaretPosition = tableCaretPosition;
+    emit tableCaretPositionChanged();
+}
+
 void Backend::restretchTableTypography() {
     if (!m_document)
         return;
@@ -840,7 +847,8 @@ void Backend::restretchTableTypography() {
     m_formattingTypography = true;
     QTextCursor cursor(m_document);
     cursor.beginEditBlock();
-    const QHash<int, qreal> heights = TableChrome::dataRowHeights(m_document, m_tableWrapWidth);
+    const QHash<int, qreal> heights = TableChrome::dataRowHeights(
+        m_document, m_tableWrapWidth, m_tableCaretPosition);
     for (QTextBlock block = m_document->begin(); block.isValid(); block = block.next())
         applyBlockLineHeight(cursor, block, heights);
     cursor.endEditBlock();
@@ -859,7 +867,8 @@ void Backend::applyDocumentTypography() {
 
     m_formattingTypography = true;
     QTextCursor cursor(m_document);
-    const QHash<int, qreal> heights = TableChrome::dataRowHeights(m_document, m_tableWrapWidth);
+    const QHash<int, qreal> heights = TableChrome::dataRowHeights(
+        m_document, m_tableWrapWidth, m_tableCaretPosition);
     for (QTextBlock block = m_document->begin(); block.isValid(); block = block.next())
         applyBlockLineHeight(cursor, block, heights);
     m_formattingTypography = false;
@@ -883,7 +892,8 @@ void Backend::reapplyTypographyToChange() {
     m_formattingTypography = true;
     QTextCursor cursor(m_document);
     cursor.joinPreviousEditBlock();
-    const QHash<int, qreal> heights = TableChrome::dataRowHeights(m_document, m_tableWrapWidth);
+    const QHash<int, qreal> heights = TableChrome::dataRowHeights(
+        m_document, m_tableWrapWidth, m_tableCaretPosition);
     QTextBlock block = m_document->findBlock(start);
     const QTextBlock last = m_document->findBlock(end);
     if (block.isValid() && block.previous().isValid())
