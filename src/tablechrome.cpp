@@ -3,22 +3,19 @@
 #include "markdownhighlighter.h"
 
 #include <QAbstractTextDocumentLayout>
-#include <QFontMetricsF>
-#include <QHash>
 #include <QList>
 #include <QPainter>
 #include <QQuickTextDocument>
 #include <QSize>
+#include <QSizeF>
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextLayout>
 #include <QTextCharFormat>
 #include <QTextLine>
-#include <QTextOption>
 #include <QTransform>
 #include <QtQml>
 
-#include <algorithm>
 #include <limits>
 
 TableChrome::TableChrome(QQuickItem *parent)
@@ -32,435 +29,6 @@ void TableChrome::registerQmlType() {
     static const int typeId = qmlRegisterType<TableChrome>("OmaOwnNote", 1, 0,
                                                            "TableChrome");
     Q_UNUSED(typeId);
-}
-
-static qreal effectiveWrapWidth(QTextDocument *document, qreal wrapWidth) {
-    if (wrapWidth > 1)
-        return wrapWidth;
-    if (!document)
-        return 10000;
-    const qreal textWidth = document->textWidth();
-    if (textWidth > 1 && textWidth < 1e6)
-        return textWidth;
-    return 10000;
-}
-
-static void typingSpan(const QString &line, const MarkdownHighlighter::Span &cell,
-                       int *typingStart, int *typingEnd) {
-    int left = cell.start;
-    const int right = cell.start + cell.length;
-    if (left < right && (line.at(left) == QLatin1Char(' ')
-                         || line.at(left) == QLatin1Char('\t')))
-        ++left;
-    *typingStart = left;
-    *typingEnd = right;
-}
-
-static void contentSpan(const QString &line, const MarkdownHighlighter::Span &cell,
-                        int *contentStart, int *contentEnd, QString *text) {
-    int start = cell.start;
-    int end = cell.start + cell.length;
-    while (start < end && (line.at(start) == QLatin1Char(' ')
-                           || line.at(start) == QLatin1Char('\t')))
-        ++start;
-    while (end > start && (line.at(end - 1) == QLatin1Char(' ')
-                           || line.at(end - 1) == QLatin1Char('\t')))
-        --end;
-    if (start >= end) {
-        int left = cell.start;
-        if (left < cell.start + cell.length
-                && (line.at(left) == QLatin1Char(' ')
-                    || line.at(left) == QLatin1Char('\t')))
-            ++left;
-        *contentStart = left;
-        *contentEnd = left;
-        *text = QString();
-        return;
-    }
-    *contentStart = start;
-    *contentEnd = end;
-    *text = line.mid(start, end - start);
-}
-
-// Pretty-print padding stays hidden, but spaces at or before the caret are
-// real cell text so a typed trailing space stays visible and the overlay
-// caret can sit in it. A caret on a closing `|` must not unhide unused
-// padding. A last cell with no closing pipe uses typingEnd at the end of
-// the line; a typed space there is real content.
-static int visibleEndForCursor(const QString &line, int contentEnd, int typingStart,
-                               int typingEnd, int blockPosition, int cursorPosition) {
-    if (cursorPosition < 0)
-        return contentEnd;
-    const int absStart = blockPosition + typingStart;
-    const int absEnd = blockPosition + typingEnd;
-    if (cursorPosition < absStart || cursorPosition > absEnd)
-        return contentEnd;
-    const bool onClosingPipe = cursorPosition == absEnd
-            && typingEnd < line.size()
-            && line.at(typingEnd) == QLatin1Char('|');
-    if (onClosingPipe)
-        return contentEnd;
-    const int cursorInLine = cursorPosition - blockPosition;
-    return qBound(typingStart, qMax(contentEnd, cursorInLine), typingEnd);
-}
-
-static QString visibleCellText(const QString &line, int contentStart, int contentEnd,
-                               int typingStart, int typingEnd,
-                               int blockPosition, int cursorPosition) {
-    const int visibleEnd = visibleEndForCursor(line, contentEnd, typingStart, typingEnd,
-                                               blockPosition, cursorPosition);
-    if (visibleEnd <= contentStart)
-        return {};
-    return line.mid(contentStart, visibleEnd - contentStart);
-}
-
-struct CellSpan {
-    int contentStart = 0;
-    int contentEnd = 0;
-    int typingStart = 0;
-    int typingEnd = 0;
-    QString text;
-};
-
-static CellSpan cellSpanFor(const QString &line, const MarkdownHighlighter::Span &cell,
-                            int blockPosition, int cursorPosition) {
-    CellSpan span;
-    typingSpan(line, cell, &span.typingStart, &span.typingEnd);
-    contentSpan(line, cell, &span.contentStart, &span.contentEnd, &span.text);
-    span.text = visibleCellText(line, span.contentStart, span.contentEnd,
-                                span.typingStart, span.typingEnd,
-                                blockPosition, cursorPosition);
-    return span;
-}
-
-static qreal layoutCellHeight(const QString &text, const QFont &font, qreal width) {
-    if (text.isEmpty() || width < 1)
-        return 0;
-
-    QTextLayout layout(text, font);
-    QTextOption option;
-    option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
-    option.setAlignment(Qt::AlignLeft | Qt::AlignTop);
-    layout.setTextOption(option);
-    layout.beginLayout();
-    qreal y = 0;
-    while (true) {
-        QTextLine line = layout.createLine();
-        if (!line.isValid())
-            break;
-        line.setLineWidth(width);
-        line.setPosition(QPointF(0, y));
-        y += line.height();
-    }
-    layout.endLayout();
-    return y;
-}
-
-static void prepareCellLayout(QTextLayout *layout, const QString &text,
-                              const QFont &font, qreal width) {
-    layout->setFont(font);
-    layout->setText(text);
-    QTextOption option;
-    option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
-    option.setAlignment(Qt::AlignLeft | Qt::AlignTop);
-    layout->setTextOption(option);
-    layout->beginLayout();
-    qreal y = 0;
-    if (text.isEmpty()) {
-        layout->endLayout();
-        return;
-    }
-    while (true) {
-        QTextLine line = layout->createLine();
-        if (!line.isValid())
-            break;
-        line.setLineWidth(qMax(qreal(1), width));
-        line.setPosition(QPointF(0, y));
-        y += line.height();
-    }
-    layout->endLayout();
-}
-
-// An empty cell lays out no lines, so its bounding rect is zero-height. Treat
-// it as a single line of the cell font so the caret and text origin are
-// centred like a one-line cell instead of collapsing to the row's midpoint.
-static qreal cellLineHeight(const QTextLayout &layout, const QFont &font) {
-    if (layout.lineCount() > 0)
-        return layout.boundingRect().height();
-    return QFontMetricsF(font).height();
-}
-
-static qreal cellTextOffset(const QTextLayout &layout, const QFont &font,
-                            const QRectF &textRect) {
-    return qMax(qreal(0), (textRect.height() - cellLineHeight(layout, font)) * 0.5);
-}
-
-// Overflow shrinks every currently-widest column together down to the next
-// tier (or minInner). Dumping the whole extra onto one column crushed it to
-// a few characters while a slightly shorter sibling kept the row.
-static QVector<qreal> shrinkInners(QVector<qreal> inners, qreal minInner, qreal extra) {
-    while (extra > 0.5) {
-        qreal widestWidth = minInner;
-        for (qreal inner : inners)
-            widestWidth = qMax(widestWidth, inner);
-        if (widestWidth <= minInner + 0.5)
-            break;
-
-        QVector<int> widest;
-        qreal nextWidth = minInner;
-        for (int i = 0; i < inners.size(); ++i) {
-            if (inners.at(i) > widestWidth - 0.5) {
-                widest.append(i);
-                continue;
-            }
-            nextWidth = qMax(nextWidth, inners.at(i));
-        }
-        if (widest.isEmpty())
-            break;
-
-        const qreal roomEach = widestWidth - nextWidth;
-        if (roomEach <= 0.5)
-            break;
-        const qreal takeEach = qMin(extra / widest.size(), roomEach);
-        for (int index : widest)
-            inners[index] -= takeEach;
-        extra -= takeEach * widest.size();
-    }
-    return inners;
-}
-
-QVector<TableChrome::TableGeom> TableChrome::buildGeometries(QTextDocument *document,
-                                                             qreal wrapWidth,
-                                                             int cursorPosition) {
-    QVector<TableGeom> tables;
-    if (!document)
-        return tables;
-
-    QAbstractTextDocumentLayout *layout = document->documentLayout();
-    if (!layout)
-        return tables;
-
-    const QFont font = document->defaultFont();
-    QFont headerFont = font;
-    headerFont.setBold(true);
-    const QFontMetricsF metrics(font);
-    const qreal minRow = MarkdownHighlighter::tableDataRowLineHeight(font);
-    const qreal pipeAdvance = qMax(qreal(1), metrics.horizontalAdvance(QLatin1Char('|')));
-    const qreal spaceAdvance = qMax(qreal(1), metrics.horizontalAdvance(QLatin1Char(' ')));
-    const qreal minInner = qMax(spaceAdvance * 3, metrics.averageCharWidth() * 3);
-    const qreal cap = effectiveWrapWidth(document, wrapWidth);
-    const qreal margin = document->documentMargin();
-
-    QVector<QTextBlock> run;
-    const auto flush = [&]() {
-        if (run.isEmpty())
-            return;
-
-        QVector<QTextBlock> dataRows;
-        QTextBlock header;
-        for (const QTextBlock &block : run) {
-            if (MarkdownHighlighter::isTableSeparator(block.text()))
-                continue;
-            if (!header.isValid() && block.next().isValid()
-                    && MarkdownHighlighter::isTableSeparator(block.next().text()))
-                header = block;
-            dataRows.append(block);
-        }
-        if (dataRows.isEmpty()) {
-            run.clear();
-            return;
-        }
-
-        int columns = 0;
-        QVector<QVector<MarkdownHighlighter::Span>> rowCells;
-        QVector<QString> rowTexts;
-        rowCells.reserve(dataRows.size());
-        for (const QTextBlock &block : dataRows) {
-            const MarkdownHighlighter::TableLine parsed =
-                MarkdownHighlighter::parseTableLine(block.text());
-            rowCells.append(parsed.cells);
-            rowTexts.append(block.text());
-            columns = qMax(columns, parsed.cells.size());
-        }
-        if (columns < 1) {
-            run.clear();
-            return;
-        }
-
-        QVector<qreal> inners(columns, minInner);
-        for (int r = 0; r < dataRows.size(); ++r) {
-            const QFont &rowFont = (header.isValid()
-                                    && dataRows.at(r).position() == header.position())
-                ? headerFont : font;
-            const QFontMetricsF rowMetrics(rowFont);
-            const QVector<MarkdownHighlighter::Span> &cells = rowCells.at(r);
-            for (int c = 0; c < columns; ++c) {
-                QString text;
-                if (c < cells.size())
-                    text = cellSpanFor(rowTexts.at(r), cells.at(c),
-                                       dataRows.at(r).position(), cursorPosition).text;
-                inners[c] = qMax(inners.at(c), rowMetrics.horizontalAdvance(text));
-            }
-        }
-
-        const qreal gutter = 2 * spaceAdvance + pipeAdvance;
-        qreal total = pipeAdvance;
-        for (qreal inner : inners)
-            total += inner + gutter;
-        const qreal available = qMax(pipeAdvance + minInner * columns + gutter * columns,
-                                     cap - margin);
-        if (total > available)
-            inners = shrinkInners(inners, minInner, total - available);
-
-        QVector<qreal> columnXs;
-        qreal x = margin + pipeAdvance * 0.5;
-        columnXs.append(x);
-        for (int c = 0; c < columns; ++c) {
-            x += inners.at(c) + gutter;
-            columnXs.append(x);
-        }
-
-        const QRectF firstRow = layout->blockBoundingRect(dataRows.first());
-        qreal y = firstRow.top();
-        QVector<qreal> rowEdges;
-        rowEdges.append(y);
-        QVector<qreal> rowHeights;
-        rowHeights.reserve(dataRows.size());
-        for (int r = 0; r < dataRows.size(); ++r) {
-            const QFont &rowFont = (header.isValid()
-                                    && dataRows.at(r).position() == header.position())
-                ? headerFont : font;
-            qreal rowHeight = minRow;
-            const QVector<MarkdownHighlighter::Span> &cells = rowCells.at(r);
-            for (int c = 0; c < columns; ++c) {
-                QString text;
-                if (c < cells.size())
-                    text = cellSpanFor(rowTexts.at(r), cells.at(c),
-                                       dataRows.at(r).position(), cursorPosition).text;
-                const qreal textWidth = qMax(qreal(1), inners.at(c));
-                rowHeight = qMax(rowHeight, layoutCellHeight(text, rowFont, textWidth));
-            }
-            rowHeights.append(rowHeight);
-            y += rowHeight;
-            // The collapsed separator block still occupies its fixed line
-            // height between the header and the first body block. Fold it
-            // into the header row's edge so body hairlines land on the body
-            // blocks instead of drifting above them.
-            if (header.isValid() && dataRows.at(r).position() == header.position())
-                y += MarkdownHighlighter::tableSeparatorLineHeight;
-            rowEdges.append(y);
-        }
-
-        TableGeom geom;
-        geom.rowHeights = rowHeights;
-        geom.box.columns = columnXs;
-        geom.box.rowEdges = rowEdges;
-        geom.box.bounds = QRectF(QPointF(columnXs.first(), rowEdges.first()),
-                                 QPointF(columnXs.last(), rowEdges.last()));
-        for (int r = 0; r < dataRows.size(); ++r) {
-            geom.rowBlockPositions.append(dataRows.at(r).position());
-            if (header.isValid() && dataRows.at(r).position() == header.position()) {
-                geom.box.header = QRectF(QPointF(columnXs.first(), rowEdges.at(r)),
-                                         QPointF(columnXs.last(), rowEdges.at(r + 1)));
-            }
-            const bool isHeader = header.isValid()
-                && dataRows.at(r).position() == header.position();
-            const QVector<MarkdownHighlighter::Span> &cells = rowCells.at(r);
-            for (int c = 0; c < columns; ++c) {
-                CellGeom cell;
-                cell.row = r;
-                cell.column = c;
-                cell.blockPosition = dataRows.at(r).position();
-                cell.header = isHeader;
-                cell.rect = QRectF(QPointF(columnXs.at(c), rowEdges.at(r)),
-                                   QPointF(columnXs.at(c + 1), rowEdges.at(r + 1)));
-                const qreal textLeft = columnXs.at(c) + pipeAdvance * 0.5 + spaceAdvance;
-                const qreal textRight = columnXs.at(c + 1) - pipeAdvance * 0.5 - spaceAdvance;
-                cell.textRect = QRectF(QPointF(textLeft, rowEdges.at(r)),
-                                       QPointF(qMax(textLeft + 1, textRight),
-                                               rowEdges.at(r + 1)));
-                if (c < cells.size()) {
-                    const CellSpan span = cellSpanFor(rowTexts.at(r), cells.at(c),
-                                                      cell.blockPosition, cursorPosition);
-                    cell.contentStart = span.contentStart;
-                    cell.contentEnd = span.contentEnd;
-                    cell.typingStart = span.typingStart;
-                    cell.typingEnd = span.typingEnd;
-                    cell.text = span.text;
-                } else {
-                    cell.contentStart = dataRows.at(r).text().size();
-                    cell.contentEnd = cell.contentStart;
-                    cell.typingStart = cell.contentStart;
-                    cell.typingEnd = cell.contentStart;
-                }
-                geom.cells.append(cell);
-            }
-        }
-        tables.append(geom);
-        run.clear();
-    };
-
-    bool inFence = false;
-    for (QTextBlock block = document->begin(); block.isValid(); block = block.next()) {
-        if (MarkdownHighlighter::isFenceLine(block.text())) {
-            flush();
-            inFence = !inFence;
-            continue;
-        }
-        if (inFence || !MarkdownHighlighter::isTableRow(block.text()))
-            flush();
-        else
-            run.append(block);
-    }
-    flush();
-    return tables;
-}
-
-QVector<TableChrome::TableBox> TableChrome::collectTables(QTextDocument *document) {
-    return collectTables(document, 0);
-}
-
-QVector<TableChrome::TableBox> TableChrome::collectTables(QTextDocument *document,
-                                                          qreal wrapWidth) {
-    QVector<TableBox> tables;
-    const QVector<TableGeom> geoms = buildGeometries(document, wrapWidth);
-    tables.reserve(geoms.size());
-    for (const TableGeom &geom : geoms)
-        tables.append(geom.box);
-    return tables;
-}
-
-QHash<int, qreal> TableChrome::dataRowHeights(QTextDocument *document, qreal wrapWidth,
-                                              int cursorPosition) {
-    QHash<int, qreal> heights;
-    const QVector<TableGeom> geoms = buildGeometries(document, wrapWidth, cursorPosition);
-    for (const TableGeom &geom : geoms) {
-        for (int i = 0; i < geom.rowBlockPositions.size(); ++i)
-            heights.insert(geom.rowBlockPositions.at(i), geom.rowHeights.at(i));
-    }
-    return heights;
-}
-
-qreal TableChrome::naturalWidthOf(QTextDocument *document) {
-    if (!document)
-        return 0;
-
-    const QFontMetricsF metrics(document->defaultFont());
-    const qreal left = document->documentMargin();
-    qreal maxAdvance = 0;
-    bool inFence = false;
-    for (QTextBlock block = document->begin(); block.isValid(); block = block.next()) {
-        if (MarkdownHighlighter::isFenceLine(block.text())) {
-            inFence = !inFence;
-            continue;
-        }
-        if (inFence || !MarkdownHighlighter::isTableRow(block.text()))
-            continue;
-        maxAdvance = qMax(maxAdvance, metrics.horizontalAdvance(block.text()));
-    }
-    if (maxAdvance <= 0)
-        return 0;
-    return left + maxAdvance + 2;
 }
 
 static QPoint devicePoint(const QTransform &world, qreal x, qreal y) {
@@ -498,7 +66,7 @@ static QVector<int> snapRowStrokes(const QTransform &world, qreal x,
     return strokes;
 }
 
-void TableChrome::paintCellText(QPainter *painter, const TableGeom &geom,
+void TableChrome::paintCellText(QPainter *painter, const TableGeometry::Table &geom,
                                 const QFont &font, const QColor &textColor,
                                 const QColor &selectionColor, int selectionStart,
                                 int selectionEnd, const QString &searchQuery,
@@ -510,14 +78,14 @@ void TableChrome::paintCellText(QPainter *painter, const TableGeom &geom,
     const int selTo = qMax(selectionStart, selectionEnd);
     const bool searching = !searchQuery.isEmpty() && searchColor.isValid();
 
-    for (const CellGeom &cell : geom.cells) {
+    for (const TableGeometry::Cell &cell : geom.cells) {
         if (cell.text.isEmpty() && selFrom == selTo)
             continue;
 
         const QFont &cellFont = cell.header ? headerFont : font;
         QTextLayout cellLayout;
-        prepareCellLayout(&cellLayout, cell.text, cellFont, cell.textRect.width());
-        const qreal yOff = cellTextOffset(cellLayout, cellFont, cell.textRect);
+        TableGeometry::prepareCellLayout(&cellLayout, cell.text, cellFont, cell.textRect.width());
+        const qreal yOff = TableGeometry::cellTextOffset(cellLayout, cellFont, cell.textRect);
         const QPointF origin(cell.textRect.left(), cell.textRect.top() + yOff);
 
         QList<QTextLayout::FormatRange> ranges;
@@ -573,28 +141,37 @@ void TableChrome::paintTables(QPainter *painter, QTextDocument *document,
                               int cursorPosition) {
     if (!painter || !document)
         return;
+    paintGeometries(painter, TableGeometry::geometriesFor(document, wrapWidth, cursorPosition),
+                    document, text, rule, selectionStart, selectionEnd,
+                    selectionColor);
+}
 
-    const QVector<TableGeom> geoms = buildGeometries(document, wrapWidth, cursorPosition);
-    if (geoms.isEmpty())
+void TableChrome::paintGeometries(QPainter *painter, const QVector<TableGeometry::Table> &geoms,
+                                  QTextDocument *document, const QColor &text,
+                                  const QColor &rule, int selectionStart,
+                                  int selectionEnd, const QColor &selectionColor) {
+    if (!painter || geoms.isEmpty())
         return;
 
     const QTransform world = painter->combinedTransform();
-    const QFont font = document->defaultFont();
+    const QFont font = document ? document->defaultFont() : QFont();
     QString searchQuery;
     int currentMatchStart = -1;
     QColor searchColor;
     QColor currentSearchColor;
-    if (auto *highlighter = document->findChild<MarkdownHighlighter *>()) {
-        searchQuery = highlighter->searchQuery();
-        currentMatchStart = highlighter->currentMatchStart();
-        searchColor = highlighter->searchBackground();
-        currentSearchColor = highlighter->currentSearchBackground();
+    if (document) {
+        if (auto *highlighter = document->findChild<MarkdownHighlighter *>()) {
+            searchQuery = highlighter->searchQuery();
+            currentMatchStart = highlighter->currentMatchStart();
+            searchColor = highlighter->searchBackground();
+            currentSearchColor = highlighter->currentSearchBackground();
+        }
     }
 
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing, false);
 
-    for (const TableGeom &geom : geoms) {
+    for (const TableGeometry::Table &geom : geoms) {
         painter->save();
         painter->setTransform(world);
         paintCellText(painter, geom, font, text, selectionColor,
@@ -607,7 +184,7 @@ void TableChrome::paintTables(QPainter *painter, QTextDocument *document,
     painter->resetTransform();
     painter->setRenderHint(QPainter::Antialiasing, false);
 
-    for (const TableGeom &geom : geoms) {
+    for (const TableGeometry::Table &geom : geoms) {
         const QRectF bounds = geom.box.bounds.normalized();
         if (bounds.width() < 2 || bounds.height() < 2)
             continue;
@@ -699,7 +276,7 @@ void TableChrome::setWrapWidth(qreal wrapWidth) {
     if (qAbs(m_wrapWidth - next) < 0.5)
         return;
     m_wrapWidth = next;
-    markLayoutDirty();
+    refreshTables();
     emit wrapWidthChanged();
     update();
 }
@@ -708,8 +285,12 @@ void TableChrome::setCursorPosition(int cursorPosition) {
     if (m_cursorPosition == cursorPosition)
         return;
     m_cursorPosition = cursorPosition;
-    markLayoutDirty();
+    const int relevant = TableGeometry::layoutRelevantCursor(m_document, m_cursorPosition);
     emit cursorPositionChanged();
+    if (relevant == m_layoutCursor)
+        return;
+    m_layoutCursor = relevant;
+    refreshTables();
     update();
 }
 
@@ -749,23 +330,20 @@ void TableChrome::paint(QPainter *painter) {
         return;
     ensureLayout();
     const qreal mapped = qAbs(painter->transform().m11());
-    const qreal wrap = m_wrapWidth;
-    if (mapped > 0.98 && mapped < 1.02 && !qFuzzyCompare(m_viewScale, qreal(1))) {
+    const bool scaleHairlines = mapped > 0.98 && mapped < 1.02
+            && !qFuzzyCompare(m_viewScale, qreal(1));
+    if (scaleHairlines) {
         painter->save();
         painter->scale(m_viewScale, m_viewScale);
-        paintTables(painter, m_document, m_paper, m_textColor, m_ruleColor, wrap,
-                    m_selectionStart, m_selectionEnd, m_selectionColor,
-                    m_cursorPosition);
-        painter->restore();
-        return;
     }
-    paintTables(painter, m_document, m_paper, m_textColor, m_ruleColor, wrap,
-                m_selectionStart, m_selectionEnd, m_selectionColor,
-                m_cursorPosition);
+    paintGeometries(painter, m_tables, m_document, m_textColor, m_ruleColor,
+                    m_selectionStart, m_selectionEnd, m_selectionColor);
+    if (scaleHairlines)
+        painter->restore();
 }
 
 void TableChrome::refreshNaturalWidth() {
-    const qreal nextWidth = naturalWidthOf(m_document);
+    const qreal nextWidth = TableGeometry::naturalWidthOf(m_document);
     if (qAbs(m_naturalWidth - nextWidth) < qreal(0.5))
         return;
     m_naturalWidth = nextWidth;
@@ -774,6 +352,15 @@ void TableChrome::refreshNaturalWidth() {
 
 void TableChrome::markLayoutDirty() {
     m_layoutDirty = true;
+}
+
+void TableChrome::refreshTables() {
+    m_tables = TableGeometry::geometriesFor(m_document, m_wrapWidth, m_cursorPosition);
+    m_layoutDirty = false;
+    const int sr = TableGeometry::structureRevision(m_document);
+    if (sr == m_lastStructureRevision)
+        return;
+    m_lastStructureRevision = sr;
     ++m_layoutRevision;
     emit layoutChanged();
 }
@@ -781,16 +368,16 @@ void TableChrome::markLayoutDirty() {
 void TableChrome::ensureLayout() const {
     if (!m_layoutDirty)
         return;
-    m_tables = buildGeometries(m_document, m_wrapWidth, m_cursorPosition);
+    m_tables = TableGeometry::geometriesFor(m_document, m_wrapWidth, m_cursorPosition);
     m_layoutDirty = false;
 }
 
-const TableChrome::CellGeom *TableChrome::cellAtPosition(int position) const {
+const TableGeometry::Cell *TableChrome::cellAtPosition(int position) const {
     ensureLayout();
-    const CellGeom *best = nullptr;
+    const TableGeometry::Cell *best = nullptr;
     int bestDistance = std::numeric_limits<int>::max();
-    for (const TableGeom &table : m_tables) {
-        for (const CellGeom &cell : table.cells) {
+    for (const TableGeometry::Table &table : m_tables) {
+        for (const TableGeometry::Cell &cell : table.cells) {
             const int start = cell.blockPosition + cell.typingStart;
             const int end = cell.blockPosition + cell.typingEnd;
             if (position >= start && position <= end)
@@ -807,8 +394,8 @@ const TableChrome::CellGeom *TableChrome::cellAtPosition(int position) const {
         return nullptr;
 
     const int blockPosition = block.position();
-    for (const TableGeom &table : m_tables) {
-        for (const CellGeom &cell : table.cells) {
+    for (const TableGeometry::Table &table : m_tables) {
+        for (const TableGeometry::Cell &cell : table.cells) {
             if (cell.blockPosition != blockPosition)
                 continue;
             const int start = cell.blockPosition + cell.typingStart;
@@ -825,9 +412,9 @@ const TableChrome::CellGeom *TableChrome::cellAtPosition(int position) const {
 
 int TableChrome::hitTest(qreal x, qreal y) const {
     ensureLayout();
-    const TableGeom *hitTable = nullptr;
+    const TableGeometry::Table *hitTable = nullptr;
     int hitRow = -1;
-    for (const TableGeom &table : m_tables) {
+    for (const TableGeometry::Table &table : m_tables) {
         const QRectF bounds = table.box.bounds;
         if (y < bounds.top() || y > bounds.bottom())
             continue;
@@ -857,8 +444,8 @@ int TableChrome::hitTest(qreal x, qreal y) const {
         }
     }
 
-    const CellGeom *cell = nullptr;
-    for (const CellGeom &candidate : hitTable->cells) {
+    const TableGeometry::Cell *cell = nullptr;
+    for (const TableGeometry::Cell &candidate : hitTable->cells) {
         if (candidate.row == hitRow && candidate.column == hitColumn) {
             cell = &candidate;
             break;
@@ -871,8 +458,8 @@ int TableChrome::hitTest(qreal x, qreal y) const {
     if (cell->header)
         font.setBold(true);
     QTextLayout layout;
-    prepareCellLayout(&layout, cell->text, font, cell->textRect.width());
-    const qreal yOff = cellTextOffset(layout, font, cell->textRect);
+    TableGeometry::prepareCellLayout(&layout, cell->text, font, cell->textRect.width());
+    const qreal yOff = TableGeometry::cellTextOffset(layout, font, cell->textRect);
     const qreal localX = x - cell->textRect.left();
     const qreal localY = y - cell->textRect.top() - yOff;
 
@@ -897,7 +484,7 @@ int TableChrome::hitTest(qreal x, qreal y) const {
 }
 
 QRectF TableChrome::caretRect(int position) const {
-    const CellGeom *cell = cellAtPosition(position);
+    const TableGeometry::Cell *cell = cellAtPosition(position);
     if (!cell)
         return {};
 
@@ -916,21 +503,21 @@ QRectF TableChrome::caretRect(int position) const {
         const QTextBlock block = m_document->findBlock(cell->blockPosition);
         if (block.isValid()) {
             const QString line = block.text();
-            const int visEnd = visibleEndForCursor(line, cell->contentEnd, cell->typingStart,
-                                                   cell->typingEnd, cell->blockPosition,
-                                                   position);
+            const int visEnd = TableGeometry::visibleEndForCursor(
+                line, cell->contentEnd, cell->typingStart,
+                cell->typingEnd, cell->blockPosition, position);
             text = line.mid(cell->contentStart, visEnd - cell->contentStart);
             offset = qBound(0, position - start, text.size());
         }
     }
 
     QTextLayout layout;
-    prepareCellLayout(&layout, text, font, cell->textRect.width());
-    const qreal yOff = cellTextOffset(layout, font, cell->textRect);
+    TableGeometry::prepareCellLayout(&layout, text, font, cell->textRect.width());
+    const qreal yOff = TableGeometry::cellTextOffset(layout, font, cell->textRect);
 
     qreal caretX = cell->textRect.left();
     qreal caretY = cell->textRect.top() + yOff;
-    qreal caretH = cellLineHeight(layout, font);
+    qreal caretH = TableGeometry::cellLineHeight(layout, font);
     if (layout.lineCount() > 0) {
         const QTextLine line = layout.lineForTextPosition(offset);
         if (line.isValid()) {
@@ -943,33 +530,29 @@ QRectF TableChrome::caretRect(int position) const {
 }
 
 bool TableChrome::positionInTable(int position) const {
-    ensureLayout();
-    for (const TableGeom &table : m_tables) {
-        for (int blockPosition : table.rowBlockPositions) {
-            if (!m_document)
-                continue;
-            const QTextBlock block = m_document->findBlock(blockPosition);
-            if (!block.isValid())
-                continue;
-            if (position >= block.position()
-                    && position < block.position() + block.length())
-                return true;
-        }
-    }
-    return false;
+    if (!m_document)
+        return false;
+    const QTextBlock block = m_document->findBlock(position);
+    if (!block.isValid()
+            || position < block.position()
+            || position >= block.position() + block.length()
+            || block.userState() == 1)
+        return false;
+    return MarkdownHighlighter::isTableRow(block.text())
+            && !MarkdownHighlighter::isTableSeparator(block.text());
 }
 
 int TableChrome::movePositionVertically(int position, int direction) const {
-    const CellGeom *cellPtr = cellAtPosition(position);
+    const TableGeometry::Cell *cellPtr = cellAtPosition(position);
     if (!cellPtr)
         return -1;
-    const CellGeom cell = *cellPtr;
+    const TableGeometry::Cell cell = *cellPtr;
 
     QFont font = m_document ? m_document->defaultFont() : QFont();
     if (cell.header)
         font.setBold(true);
     QTextLayout layout;
-    prepareCellLayout(&layout, cell.text, font, cell.textRect.width());
+    TableGeometry::prepareCellLayout(&layout, cell.text, font, cell.textRect.width());
     const int start = cell.blockPosition + cell.contentStart;
     const int offset = qBound(0, position - start, cell.text.size());
     if (layout.lineCount() > 0) {
@@ -985,9 +568,9 @@ int TableChrome::movePositionVertically(int position, int direction) const {
     }
 
     const int nextRow = cell.row + (direction > 0 ? 1 : -1);
-    for (const TableGeom &table : m_tables) {
+    for (const TableGeometry::Table &table : m_tables) {
         bool owns = false;
-        for (const CellGeom &candidate : table.cells) {
+        for (const TableGeometry::Cell &candidate : table.cells) {
             if (candidate.blockPosition == cell.blockPosition
                     && candidate.column == cell.column) {
                 owns = true;
@@ -996,7 +579,7 @@ int TableChrome::movePositionVertically(int position, int direction) const {
         }
         if (!owns)
             continue;
-        for (const CellGeom &candidate : table.cells) {
+        for (const TableGeometry::Cell &candidate : table.cells) {
             if (candidate.row == nextRow && candidate.column == cell.column)
                 return candidate.blockPosition + candidate.contentStart;
         }
@@ -1013,7 +596,10 @@ void TableChrome::bindDocument(QTextDocument *document) {
     }
 
     m_document = document;
-    markLayoutDirty();
+    m_lastDocumentWidth = -1;
+    m_lastDocumentHeight = -1;
+    m_layoutCursor = std::numeric_limits<int>::min();
+    m_lastStructureRevision = 0;
     if (!m_document) {
         if (!qFuzzyIsNull(m_naturalWidth)) {
             m_naturalWidth = 0;
@@ -1023,20 +609,34 @@ void TableChrome::bindDocument(QTextDocument *document) {
         return;
     }
 
-    connect(m_document, &QTextDocument::contentsChanged, this, [this]() {
-        markLayoutDirty();
+    connect(m_document, &QTextDocument::contentsChange, this,
+            [this](int, int removed, int added) {
+        // Format-only restretch and highlighter updates do not change cell
+        // source. Row Y shifts arrive through documentSizeChanged.
+        if (removed == 0 && added == 0)
+            return;
+        refreshTables();
         refreshNaturalWidth();
         update();
     });
     if (auto *layout = m_document->documentLayout()) {
         connect(layout, &QAbstractTextDocumentLayout::documentSizeChanged,
-                this, [this](const QSizeF &) {
-            markLayoutDirty();
+                this, [this](const QSizeF &size) {
+            if (qAbs(size.width() - m_lastDocumentWidth) < 0.5
+                    && qAbs(size.height() - m_lastDocumentHeight) < 0.5)
+                return;
+            m_lastDocumentWidth = size.width();
+            m_lastDocumentHeight = size.height();
+            refreshTables();
             refreshNaturalWidth();
             update();
         });
         connect(layout, &QAbstractTextDocumentLayout::update,
                 this, [this](const QRectF &) { update(); });
+        const QSizeF size = layout->documentSize();
+        m_lastDocumentWidth = size.width();
+        m_lastDocumentHeight = size.height();
     }
+    refreshTables();
     refreshNaturalWidth();
 }

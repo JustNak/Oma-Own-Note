@@ -9,6 +9,8 @@ HEADERS += \
     src/markdownhighlighter.h \
     src/systemtheme.h \
     src/tablechrome.h \
+    src/tablegeometry.h \
+    src/tabletypography.h \
     src/viewzoom.h
 
 SOURCES += \
@@ -16,6 +18,8 @@ SOURCES += \
     src/backend.cpp \
     src/markdownhighlighter.cpp \
     src/systemtheme.cpp \
-    src/tablechrome.cpp
+    src/tablechrome.cpp \
+    src/tablegeometry.cpp \
+    src/tabletypography.cpp
 
 RESOURCES += src/resources.qrc

@@ -110,10 +110,6 @@ void MarkdownHighlighter::rebuildFormats() {
     m_currentSearchFormat.setBackground(m_darkMode ? QColor(QStringLiteral("#b36b20"))
                                                    : QColor(QStringLiteral("#ffad42")));
 
-    m_tableHeaderFormat = QTextCharFormat();
-    m_tableHeaderFormat.setForeground(text);
-    m_tableHeaderFormat.setFontWeight(QFont::Bold);
-
     // Entire table-row source stays invisible so TableChrome can paint
     // wrapped cell text and hairlines without doubled glyphs. A transparent
     // foreground alone is not enough: TextEdit repaints selected glyphs in
@@ -283,8 +279,7 @@ MarkdownHighlighter::TableLine MarkdownHighlighter::parseTableLine(const QString
 }
 
 void MarkdownHighlighter::highlightTable(const QString &text) {
-    const TableLine line = parseTableLine(text);
-    if (line.kind == TableLine::Kind::None)
+    if (!isTableRow(text))
         return;
 
     // Overlay paints cell text and rules. Keep source glyphs invisible so they

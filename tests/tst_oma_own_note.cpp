@@ -14,6 +14,7 @@
 #include <QStringList>
 #include <QTextBlock>
 #include <QTextBlockFormat>
+#include <QTextCharFormat>
 #include <QTextCursor>
 #include <QAbstractTextDocumentLayout>
 #include <QTextDocument>
@@ -22,6 +23,7 @@
 #include "backend.h"
 #include "markdownhighlighter.h"
 #include "tablechrome.h"
+#include "tablegeometry.h"
 #include "viewzoom.h"
 
 static QString firstTableCellRaw(const QString &line)
@@ -461,7 +463,7 @@ private slots:
         document.drawContents(&painter);
         painter.end();
 
-        const auto tables = TableChrome::collectTables(&document);
+        const auto tables = TableGeometry::collectTables(&document);
         QCOMPARE(tables.size(), 1);
 
         QTextDocument fencedOnly;
@@ -478,7 +480,7 @@ private slots:
         QPainter fencePainter(&fenceSurface);
         fencedOnly.drawContents(&fencePainter);
         fencePainter.end();
-        QCOMPARE(TableChrome::collectTables(&fencedOnly).size(), 0);
+        QCOMPARE(TableGeometry::collectTables(&fencedOnly).size(), 0);
     }
 
     void tabMovesBetweenTableCells() {
@@ -794,7 +796,7 @@ private slots:
         QCOMPARE(separator.blockFormat().lineHeight(),
                  MarkdownHighlighter::tableSeparatorLineHeight);
 
-        const auto tables = TableChrome::collectTables(document);
+        const auto tables = TableGeometry::collectTables(document);
         QCOMPARE(tables.size(), 1);
         const QVector<qreal> edges = tables.first().rowEdges;
         QVERIFY(edges.size() >= 4);
@@ -866,7 +868,7 @@ private slots:
             QVERIFY(block.layout());
             QCOMPARE(block.layout()->lineCount(), 1);
         }
-        const auto tables = TableChrome::collectTables(
+        const auto tables = TableGeometry::collectTables(
             document, editor->property("width").toReal());
         QCOMPARE(tables.size(), 1);
         QCOMPARE(tables.first().columns.size(), 9);
@@ -887,7 +889,7 @@ private slots:
             + longCell + QStringLiteral(" | y |\n"));
         document.setTextWidth(220);
 
-        const auto tables = TableChrome::collectTables(&document, 220);
+        const auto tables = TableGeometry::collectTables(&document, 220);
         QCOMPARE(tables.size(), 1);
         QVERIFY2(tables.first().bounds.width() <= 221,
                  qPrintable(QStringLiteral("table width %1")
@@ -927,7 +929,7 @@ private slots:
             "|  |  |  |\n"));
         document.setTextWidth(wrapWidth);
 
-        const auto tables = TableChrome::collectTables(&document, wrapWidth);
+        const auto tables = TableGeometry::collectTables(&document, wrapWidth);
         QCOMPARE(tables.size(), 1);
         const auto &box = tables.first();
         QVERIFY2(box.bounds.width() <= wrapWidth + 1,
@@ -991,8 +993,8 @@ private slots:
         backend.setTableWrapWidth(wrapWidth);
         const int headerPos = document->begin().position();
         const int paddingCaret = 2 + 80 + 3 + 20;
-        const QHash<int, qreal> outside = TableChrome::dataRowHeights(document, wrapWidth, -1);
-        const QHash<int, qreal> inside = TableChrome::dataRowHeights(
+        const QHash<int, qreal> outside = TableGeometry::dataRowHeights(document, wrapWidth, -1);
+        const QHash<int, qreal> inside = TableGeometry::dataRowHeights(
             document, wrapWidth, paddingCaret);
         QVERIFY(inside.contains(headerPos));
         QVERIFY2(inside.value(headerPos) > outside.value(headerPos) + 4,
@@ -1043,6 +1045,186 @@ private slots:
                  "caret restretch must not intercept the typing undo command");
     }
 
+    void tableContentCursorSharesRowHeights() {
+        QTextDocument document;
+        QFont font(QStringLiteral("monospace"));
+        font.setStyleHint(QFont::Monospace);
+        font.setFixedPitch(true);
+        font.setPixelSize(16);
+        document.setDefaultFont(font);
+        document.setPlainText(QStringLiteral(
+            "| hello | world |\n"
+            "| --- | --- |\n"
+            "| x | y |\n"));
+        document.setTextWidth(2000);
+
+        const int hello = document.toPlainText().indexOf(QLatin1String("hello"));
+        QVERIFY(hello >= 0);
+        const QHash<int, qreal> atHello =
+            TableGeometry::dataRowHeights(&document, 2000, hello);
+        const QHash<int, qreal> atNext =
+            TableGeometry::dataRowHeights(&document, 2000, hello + 3);
+        const QHash<int, qreal> outside =
+            TableGeometry::dataRowHeights(&document, 2000, -1);
+        QCOMPARE(atHello, atNext);
+        QCOMPARE(atHello, outside);
+        QCOMPARE(TableGeometry::layoutRelevantCursor(&document, hello), -1);
+        QCOMPARE(TableGeometry::layoutRelevantCursor(&document, hello + 3), -1);
+    }
+
+    void tableContentCaretDoesNotRestretch() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+        const QString text = QStringLiteral(
+            "| hello | world |\n"
+            "| --- | --- |\n"
+            "| x | y |\n");
+        editor->setProperty("text", text);
+
+        auto *quickDocument = qobject_cast<QQuickTextDocument *>(
+            qvariant_cast<QObject *>(editor->property("textDocument")));
+        QVERIFY(quickDocument);
+        QTextDocument *document = quickDocument->textDocument();
+        QVERIFY(document);
+
+        backend.setTableWrapWidth(2000);
+        const int hello = text.indexOf(QLatin1String("hello"));
+        backend.setTableCaretPosition(hello);
+        const int revision = document->revision();
+        const qreal headerHeight = document->begin().blockFormat().lineHeight();
+
+        backend.setTableCaretPosition(hello + 1);
+        QCOMPARE(document->revision(), revision);
+        QCOMPARE(document->begin().blockFormat().lineHeight(), headerHeight);
+    }
+
+    void tableChromeContentCaretKeepsLayoutRevision() {
+        QTextDocument document;
+        QFont font(QStringLiteral("monospace"));
+        font.setStyleHint(QFont::Monospace);
+        font.setFixedPitch(true);
+        font.setPixelSize(16);
+        document.setDefaultFont(font);
+        document.setPlainText(QStringLiteral(
+            "| hello | world |\n"
+            "| --- | --- |\n"
+            "| x | y |\n"));
+        document.setTextWidth(2000);
+
+        TableChrome chrome;
+        chrome.setWrapWidth(2000);
+        chrome.setTextDocument(&document);
+        const int hello = document.toPlainText().indexOf(QLatin1String("hello"));
+        chrome.setCursorPosition(hello);
+        QVERIFY(chrome.caretRect(hello).height() > 0);
+        const int revision = chrome.layoutRevision();
+        chrome.setCursorPosition(hello + 2);
+        QCOMPARE(chrome.layoutRevision(), revision);
+    }
+
+    void tableChromePaddingCaretRevealsSpaces() {
+        QTextDocument document;
+        QFont font(QStringLiteral("monospace"));
+        font.setStyleHint(QFont::Monospace);
+        font.setFixedPitch(true);
+        font.setPixelSize(16);
+        document.setDefaultFont(font);
+        document.setPlainText(QStringLiteral(
+            "| hello     | world |\n"
+            "| --- | --- |\n"
+            "| x | y |\n"));
+        document.setTextWidth(2000);
+
+        TableChrome chrome;
+        chrome.setWrapWidth(2000);
+        chrome.setTextDocument(&document);
+        const int hello = document.toPlainText().indexOf(QLatin1String("hello"));
+        chrome.setCursorPosition(hello);
+        QVERIFY(chrome.caretRect(hello).height() > 0);
+        const int revision = chrome.layoutRevision();
+        const QRectF atWord = chrome.caretRect(hello);
+        QCOMPARE(TableGeometry::layoutRelevantCursor(&document, hello + 7), hello + 7);
+        chrome.setCursorPosition(hello + 7);
+        const QRectF atPad = chrome.caretRect(hello + 7);
+        QVERIFY2(atPad.height() > 0 && atPad.x() > atWord.x() + 8,
+                 "caret in trailing cell padding must sit in the revealed spaces");
+        QVERIFY2(chrome.layoutRevision() > revision,
+                 "revealed padding that widens a column must move overlay wrap");
+    }
+
+    void tableChromeTypingDoesNotDirtyUnwrappedRow() {
+        QTextDocument document;
+        QFont font(QStringLiteral("monospace"));
+        font.setStyleHint(QFont::Monospace);
+        font.setFixedPitch(true);
+        font.setPixelSize(16);
+        document.setDefaultFont(font);
+        document.setPlainText(QStringLiteral(
+            "| hello | world |\n"
+            "| --- | --- |\n"
+            "| x | y |\n"));
+        document.setTextWidth(2000);
+
+        TableChrome chrome;
+        chrome.setWrapWidth(2000);
+        chrome.setTextDocument(&document);
+        const int bodyX = document.toPlainText().indexOf(QLatin1String("| x |"));
+        QVERIFY(bodyX >= 0);
+        const int xAt = bodyX + 2;
+        chrome.setCursorPosition(xAt + 1);
+        QVERIFY(chrome.caretRect(xAt + 1).height() > 0);
+        const int revision = chrome.layoutRevision();
+
+        QTextCursor cursor(&document);
+        cursor.setPosition(xAt + 1);
+        cursor.insertText(QStringLiteral("z"));
+        chrome.setCursorPosition(xAt + 2);
+
+        QCOMPARE(chrome.layoutRevision(), revision);
+        QVERIFY(chrome.caretRect(xAt + 2).height() > 0);
+    }
+
+    void tableChromeIgnoresFormatOnlyContentsChange() {
+        QTextDocument document;
+        QFont font(QStringLiteral("monospace"));
+        font.setStyleHint(QFont::Monospace);
+        font.setFixedPitch(true);
+        font.setPixelSize(16);
+        document.setDefaultFont(font);
+        document.setPlainText(QStringLiteral(
+            "| hello | world |\n"
+            "| --- | --- |\n"
+            "| x | y |\n"));
+        document.setTextWidth(2000);
+
+        TableChrome chrome;
+        chrome.setWrapWidth(2000);
+        chrome.setTextDocument(&document);
+        const int hello = document.toPlainText().indexOf(QLatin1String("hello"));
+        chrome.setCursorPosition(hello);
+        QVERIFY(chrome.caretRect(hello).height() > 0);
+        const int revision = chrome.layoutRevision();
+
+        QTextCursor cursor(&document);
+        cursor.setPosition(hello);
+        QTextCharFormat format;
+        format.setForeground(QColor(Qt::red));
+        cursor.mergeCharFormat(format);
+
+        QCOMPARE(chrome.layoutRevision(), revision);
+    }
+
     void tableSiblingColumnsGrowTogether() {
         QTextDocument document;
         QFont font(QStringLiteral("monospace"));
@@ -1055,7 +1237,7 @@ private slots:
             "| -- | - |\n"
             "| hi | b |\n"));
         document.setTextWidth(2000);
-        const auto before = TableChrome::collectTables(&document, 2000);
+        const auto before = TableGeometry::collectTables(&document, 2000);
         QCOMPARE(before.size(), 1);
         const qreal shortCol = before.first().columns.at(1) - before.first().columns.at(0);
 
@@ -1063,7 +1245,7 @@ private slots:
             "| hellohello | a |\n"
             "| ---------- | - |\n"
             "| hi         | b |\n"));
-        const auto after = TableChrome::collectTables(&document, 2000);
+        const auto after = TableGeometry::collectTables(&document, 2000);
         QCOMPARE(after.size(), 1);
         const qreal longCol = after.first().columns.at(1) - after.first().columns.at(0);
         QVERIFY2(longCol > shortCol + 8,
@@ -1533,7 +1715,7 @@ private slots:
         QVERIFY(quickDocument);
         QTextDocument *document = quickDocument->textDocument();
         QVERIFY(document);
-        const auto tables = TableChrome::collectTables(document, columnWidth);
+        const auto tables = TableGeometry::collectTables(document, columnWidth);
         QCOMPARE(tables.size(), 1);
         QVERIFY(tables.first().rowEdges.size() >= 3);
         const qreal headerH = tables.first().rowEdges.at(1) - tables.first().rowEdges.at(0);
@@ -1557,7 +1739,7 @@ private slots:
         document.setDefaultFont(font);
         document.setPlainText(QStringLiteral("| a || b |\n| --- | --- |\n| c || d |\n"));
         document.setTextWidth(2000);
-        const auto tables = TableChrome::collectTables(&document, 2000);
+        const auto tables = TableGeometry::collectTables(&document, 2000);
         QCOMPARE(tables.size(), 1);
         QCOMPARE(tables.first().columns.size(), 4);
     }
@@ -1576,7 +1758,7 @@ private slots:
         chrome.setTextDocument(&document);
         chrome.setWrapWidth(400);
 
-        const auto tables = TableChrome::collectTables(&document, 400);
+        const auto tables = TableGeometry::collectTables(&document, 400);
         QCOMPARE(tables.size(), 1);
         const QVector<qreal> edges = tables.first().rowEdges;
         QVERIFY(edges.size() >= 3);
@@ -2095,12 +2277,12 @@ private:
             return false;
         }
 
-        const auto tables = TableChrome::collectTables(&document);
+        const auto tables = TableGeometry::collectTables(&document);
         if (tables.size() != 1) {
             qWarning("expected 1 table, got %lld", static_cast<long long>(tables.size()));
             return false;
         }
-        const TableChrome::TableBox box = tables.first();
+        const TableGeometry::Box box = tables.first();
         if (box.columns.size() != expectedPipes || !box.header.isValid()) {
             qWarning("columns %lld (want %d) header valid %d",
                      static_cast<long long>(box.columns.size()), expectedPipes,
