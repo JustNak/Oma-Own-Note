@@ -680,7 +680,7 @@ private slots:
         QVERIFY(flick);
 
         const qreal originX = canvas->property("x").toReal();
-        QVERIFY(originX > 0);
+        QVERIFY(originX >= 0);
 
         for (int i = 0; i < 5; ++i)
             backend.zoomOut();
@@ -721,7 +721,7 @@ private slots:
         const qreal columnWidth = editor->property("width").toReal();
         const qreal originX = canvas->property("x").toReal();
         QVERIFY(columnWidth > 0);
-        QVERIFY(originX > 0);
+        QVERIFY(originX >= 0);
 
         backend.zoomToPercent(70);
         QCOMPARE(backend.zoomFactor(), 0.7);
@@ -751,6 +751,96 @@ private slots:
 
         backend.resetZoom();
         QCOMPARE(editor->property("width").toReal(), columnWidth);
+    }
+
+    void editorColumnFollowsWindowNotZoom() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QObject *canvas = window->findChild<QObject *>(QStringLiteral("editorCanvas"));
+        QObject *flick = window->findChild<QObject *>(QStringLiteral("editorFlick"));
+        QObject *chrome = window->findChild<QObject *>(QStringLiteral("tableChrome"));
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
+        QVERIFY(editor);
+        QVERIFY(canvas);
+        QVERIFY(flick);
+        QVERIFY(chrome);
+        QVERIFY(quickWindow);
+
+        const auto visualColumn = [canvas]() {
+            return canvas->property("width").toReal() * canvas->property("scale").toReal();
+        };
+
+        QTRY_VERIFY(flick->property("width").toReal() > 360);
+        QVERIFY2(qAbs(visualColumn() - flick->property("width").toReal()) < 2.0,
+                 qPrintable(QStringLiteral("visual %1 vs flick %2")
+                            .arg(visualColumn())
+                            .arg(flick->property("width").toReal())));
+        QCOMPARE(chrome->property("wrapWidth").toReal(), editor->property("width").toReal());
+        const qreal visualAtDefault = visualColumn();
+        QVERIFY(visualAtDefault > 360);
+
+        backend.zoomToPercent(70);
+        QCOMPARE(backend.zoomFactor(), 0.7);
+        QCOMPARE(editor->property("font").value<QFont>().pixelSize(), 20);
+        QVERIFY2(qAbs(visualColumn() - visualAtDefault) < 2.0,
+                 qPrintable(QStringLiteral("70% visual %1 vs window column %2")
+                            .arg(visualColumn())
+                            .arg(visualAtDefault)));
+        QCOMPARE(chrome->property("wrapWidth").toReal(), editor->property("width").toReal());
+
+        backend.zoomToPercent(300);
+        QCOMPARE(backend.zoomFactor(), 3.0);
+        QVERIFY2(qAbs(visualColumn() - visualAtDefault) < 2.0,
+                 qPrintable(QStringLiteral("300% visual %1 vs window column %2")
+                            .arg(visualColumn())
+                            .arg(visualAtDefault)));
+        QCOMPARE(chrome->property("wrapWidth").toReal(), editor->property("width").toReal());
+        QVERIFY(flick->property("contentWidth").toReal()
+                <= flick->property("width").toReal() + 1);
+
+        backend.resetZoom();
+        QCOMPARE(backend.zoomFactor(), 1.0);
+        QVERIFY2(qAbs(visualColumn() - visualAtDefault) < 2.0,
+                 qPrintable(QStringLiteral("reset visual %1 vs window column %2")
+                            .arg(visualColumn())
+                            .arg(visualAtDefault)));
+
+        quickWindow->resize(1600, quickWindow->height());
+        QTRY_VERIFY(visualColumn() > visualAtDefault + 50);
+        QVERIFY2(qAbs(visualColumn() - flick->property("width").toReal()) < 2.0,
+                 qPrintable(QStringLiteral("wide visual %1 vs flick %2")
+                            .arg(visualColumn())
+                            .arg(flick->property("width").toReal())));
+        QCOMPARE(chrome->property("wrapWidth").toReal(), editor->property("width").toReal());
+
+        quickWindow->resize(800, quickWindow->height());
+        QTRY_VERIFY(visualColumn() < visualAtDefault - 50);
+        QVERIFY2(qAbs(visualColumn() - flick->property("width").toReal()) < 2.0,
+                 qPrintable(QStringLiteral("narrow visual %1 vs flick %2")
+                            .arg(visualColumn())
+                            .arg(flick->property("width").toReal())));
+        QCOMPARE(chrome->property("wrapWidth").toReal(), editor->property("width").toReal());
+
+        const qreal visualAtNarrow = visualColumn();
+        backend.zoomToPercent(70);
+        QCOMPARE(backend.zoomFactor(), 0.7);
+        QVERIFY2(qAbs(visualColumn() - visualAtNarrow) < 2.0,
+                 qPrintable(QStringLiteral("narrow 70% visual %1 vs column %2")
+                            .arg(visualColumn())
+                            .arg(visualAtNarrow)));
+        QCOMPARE(chrome->property("wrapWidth").toReal(), editor->property("width").toReal());
+
+        backend.resetZoom();
     }
 
     void tableInsertedRowsHaveEqualHeight() {
