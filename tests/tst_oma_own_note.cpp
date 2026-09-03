@@ -1123,6 +1123,7 @@ private slots:
         chrome.setTextDocument(&document);
         const int hello = document.toPlainText().indexOf(QLatin1String("hello"));
         chrome.setCursorPosition(hello);
+        QVERIFY(chrome.caretRect(hello).height() > 0);
         const int revision = chrome.layoutRevision();
         chrome.setCursorPosition(hello + 2);
         QCOMPARE(chrome.layoutRevision(), revision);
@@ -1146,6 +1147,7 @@ private slots:
         chrome.setTextDocument(&document);
         const int hello = document.toPlainText().indexOf(QLatin1String("hello"));
         chrome.setCursorPosition(hello);
+        QVERIFY(chrome.caretRect(hello).height() > 0);
         const int revision = chrome.layoutRevision();
         chrome.setCursorPosition(hello + 7);
         QVERIFY2(chrome.layoutRevision() > revision,

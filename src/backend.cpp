@@ -822,34 +822,6 @@ static bool rangeNeedsTableTypography(QTextDocument *document, int position, int
     return false;
 }
 
-static void applyBlockLineHeight(QTextCursor &cursor, const QTextBlock &block,
-                                 const QHash<int, qreal> &tableRowHeights) {
-    QTextBlockFormat format = block.blockFormat();
-    format.setTopMargin(0);
-    format.setBottomMargin(0);
-    const QTextDocument *document = block.document();
-    const QFont font = document ? document->defaultFont() : QFont();
-    if (MarkdownHighlighter::isTableSeparator(block.text())) {
-        format.setLineHeight(MarkdownHighlighter::tableSeparatorLineHeight,
-                             QTextBlockFormat::FixedHeight);
-        format.setNonBreakableLines(true);
-    } else if (MarkdownHighlighter::isTableRow(block.text())) {
-        const qreal height = tableRowHeights.value(
-            block.position(), MarkdownHighlighter::tableDataRowLineHeight(font));
-        format.setLineHeight(height, QTextBlockFormat::MinimumHeight);
-        format.setNonBreakableLines(true);
-    } else {
-        format.setLineHeight(typoraLineHeightPercent, QTextBlockFormat::ProportionalHeight);
-        format.setNonBreakableLines(false);
-    }
-    if (block.blockFormat().lineHeight() == format.lineHeight()
-            && block.blockFormat().lineHeightType() == format.lineHeightType()
-            && block.blockFormat().nonBreakableLines() == format.nonBreakableLines())
-        return;
-    cursor.setPosition(block.position());
-    cursor.setBlockFormat(format);
-}
-
 static bool blockMatchesTableTypography(const QTextBlock &block,
                                         const QHash<int, qreal> &tableRowHeights) {
     const QTextBlockFormat format = block.blockFormat();
@@ -870,6 +842,32 @@ static bool blockMatchesTableTypography(const QTextBlock &block,
     return format.lineHeight() == typoraLineHeightPercent
             && format.lineHeightType() == QTextBlockFormat::ProportionalHeight
             && !format.nonBreakableLines();
+}
+
+static void applyBlockLineHeight(QTextCursor &cursor, const QTextBlock &block,
+                                 const QHash<int, qreal> &tableRowHeights) {
+    if (blockMatchesTableTypography(block, tableRowHeights))
+        return;
+    QTextBlockFormat format = block.blockFormat();
+    format.setTopMargin(0);
+    format.setBottomMargin(0);
+    const QTextDocument *document = block.document();
+    const QFont font = document ? document->defaultFont() : QFont();
+    if (MarkdownHighlighter::isTableSeparator(block.text())) {
+        format.setLineHeight(MarkdownHighlighter::tableSeparatorLineHeight,
+                             QTextBlockFormat::FixedHeight);
+        format.setNonBreakableLines(true);
+    } else if (MarkdownHighlighter::isTableRow(block.text())) {
+        const qreal height = tableRowHeights.value(
+            block.position(), MarkdownHighlighter::tableDataRowLineHeight(font));
+        format.setLineHeight(height, QTextBlockFormat::MinimumHeight);
+        format.setNonBreakableLines(true);
+    } else {
+        format.setLineHeight(typoraLineHeightPercent, QTextBlockFormat::ProportionalHeight);
+        format.setNonBreakableLines(false);
+    }
+    cursor.setPosition(block.position());
+    cursor.setBlockFormat(format);
 }
 
 void Backend::setTableWrapWidth(qreal tableWrapWidth) {
