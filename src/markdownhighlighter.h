@@ -83,6 +83,5 @@ private:
     int m_currentMatchStart = -1;
     QTextCharFormat m_searchFormat;
     QTextCharFormat m_currentSearchFormat;
-    QTextCharFormat m_tableHeaderFormat;
     QTextCharFormat m_tableHiddenSyntaxFormat;
 };

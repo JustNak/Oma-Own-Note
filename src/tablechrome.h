@@ -148,6 +148,12 @@ private:
     const CellGeom *cellAtPosition(int position) const;
     static QVector<TableGeom> buildGeometries(QTextDocument *document, qreal wrapWidth,
                                               int cursorPosition = -1);
+    static QVector<TableGeom> geometriesFor(QTextDocument *document, qreal wrapWidth,
+                                            int cursorPosition);
+    static void paintGeometries(QPainter *painter, const QVector<TableGeom> &geoms,
+                                QTextDocument *document, const QColor &text,
+                                const QColor &rule, int selectionStart,
+                                int selectionEnd, const QColor &selectionColor);
     static void paintCellText(QPainter *painter, const TableGeom &geom,
                               const QFont &font, const QColor &textColor,
                               const QColor &selectionColor,

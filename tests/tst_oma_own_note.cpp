@@ -1043,6 +1043,115 @@ private slots:
                  "caret restretch must not intercept the typing undo command");
     }
 
+    void tableContentCursorSharesRowHeights() {
+        QTextDocument document;
+        QFont font(QStringLiteral("monospace"));
+        font.setStyleHint(QFont::Monospace);
+        font.setFixedPitch(true);
+        font.setPixelSize(16);
+        document.setDefaultFont(font);
+        document.setPlainText(QStringLiteral(
+            "| hello | world |\n"
+            "| --- | --- |\n"
+            "| x | y |\n"));
+        document.setTextWidth(2000);
+
+        const int hello = document.toPlainText().indexOf(QLatin1String("hello"));
+        QVERIFY(hello >= 0);
+        const QHash<int, qreal> atHello =
+            TableChrome::dataRowHeights(&document, 2000, hello);
+        const QHash<int, qreal> atNext =
+            TableChrome::dataRowHeights(&document, 2000, hello + 3);
+        const QHash<int, qreal> outside =
+            TableChrome::dataRowHeights(&document, 2000, -1);
+        QCOMPARE(atHello, atNext);
+        QCOMPARE(atHello, outside);
+    }
+
+    void tableContentCaretDoesNotRestretch() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+        const QString text = QStringLiteral(
+            "| hello | world |\n"
+            "| --- | --- |\n"
+            "| x | y |\n");
+        editor->setProperty("text", text);
+
+        auto *quickDocument = qobject_cast<QQuickTextDocument *>(
+            qvariant_cast<QObject *>(editor->property("textDocument")));
+        QVERIFY(quickDocument);
+        QTextDocument *document = quickDocument->textDocument();
+        QVERIFY(document);
+
+        backend.setTableWrapWidth(2000);
+        const int hello = text.indexOf(QLatin1String("hello"));
+        backend.setTableCaretPosition(hello);
+        const int revision = document->revision();
+        const qreal headerHeight = document->begin().blockFormat().lineHeight();
+
+        backend.setTableCaretPosition(hello + 1);
+        QCOMPARE(document->revision(), revision);
+        QCOMPARE(document->begin().blockFormat().lineHeight(), headerHeight);
+    }
+
+    void tableChromeContentCaretKeepsLayoutRevision() {
+        QTextDocument document;
+        QFont font(QStringLiteral("monospace"));
+        font.setStyleHint(QFont::Monospace);
+        font.setFixedPitch(true);
+        font.setPixelSize(16);
+        document.setDefaultFont(font);
+        document.setPlainText(QStringLiteral(
+            "| hello | world |\n"
+            "| --- | --- |\n"
+            "| x | y |\n"));
+        document.setTextWidth(2000);
+
+        TableChrome chrome;
+        chrome.setWrapWidth(2000);
+        chrome.setTextDocument(&document);
+        const int hello = document.toPlainText().indexOf(QLatin1String("hello"));
+        chrome.setCursorPosition(hello);
+        const int revision = chrome.layoutRevision();
+        chrome.setCursorPosition(hello + 2);
+        QCOMPARE(chrome.layoutRevision(), revision);
+    }
+
+    void tableChromePaddingCaretDirtiesLayout() {
+        QTextDocument document;
+        QFont font(QStringLiteral("monospace"));
+        font.setStyleHint(QFont::Monospace);
+        font.setFixedPitch(true);
+        font.setPixelSize(16);
+        document.setDefaultFont(font);
+        document.setPlainText(QStringLiteral(
+            "| hello     | world |\n"
+            "| --- | --- |\n"
+            "| x | y |\n"));
+        document.setTextWidth(2000);
+
+        TableChrome chrome;
+        chrome.setWrapWidth(2000);
+        chrome.setTextDocument(&document);
+        const int hello = document.toPlainText().indexOf(QLatin1String("hello"));
+        chrome.setCursorPosition(hello);
+        const int revision = chrome.layoutRevision();
+        chrome.setCursorPosition(hello + 7);
+        QVERIFY2(chrome.layoutRevision() > revision,
+                 "caret in trailing cell padding must rebuild overlay wrap");
+    }
+
     void tableSiblingColumnsGrowTogether() {
         QTextDocument document;
         QFont font(QStringLiteral("monospace"));
