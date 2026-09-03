@@ -147,6 +147,7 @@ private:
     bool m_formattingTypography = false;
     qreal m_tableWrapWidth = 0;
     int m_tableCaretPosition = 0;
+    int m_tableLayoutCursor = -2;
     QHash<int, qreal> m_appliedTableHeights;
     int m_formattedBlockCount = 0;
     int m_lastChangePos = 0;

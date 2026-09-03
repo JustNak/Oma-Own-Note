@@ -31,28 +31,6 @@ void TableChrome::registerQmlType() {
     Q_UNUSED(typeId);
 }
 
-int TableChrome::layoutRelevantCursor(QTextDocument *document, int cursorPosition) {
-    return TableGeometry::layoutRelevantCursor(document, cursorPosition);
-}
-
-QVector<TableChrome::TableBox> TableChrome::collectTables(QTextDocument *document) {
-    return TableGeometry::collectTables(document, 0);
-}
-
-QVector<TableChrome::TableBox> TableChrome::collectTables(QTextDocument *document,
-                                                          qreal wrapWidth) {
-    return TableGeometry::collectTables(document, wrapWidth);
-}
-
-QHash<int, qreal> TableChrome::dataRowHeights(QTextDocument *document, qreal wrapWidth,
-                                              int cursorPosition) {
-    return TableGeometry::dataRowHeights(document, wrapWidth, cursorPosition);
-}
-
-qreal TableChrome::naturalWidthOf(QTextDocument *document) {
-    return TableGeometry::naturalWidthOf(document);
-}
-
 static QPoint devicePoint(const QTransform &world, qreal x, qreal y) {
     const QPointF mapped = world.map(QPointF(x, y));
     return QPoint(qRound(mapped.x()), qRound(mapped.y()));
@@ -88,7 +66,7 @@ static QVector<int> snapRowStrokes(const QTransform &world, qreal x,
     return strokes;
 }
 
-void TableChrome::paintCellText(QPainter *painter, const TableGeom &geom,
+void TableChrome::paintCellText(QPainter *painter, const TableGeometry::Table &geom,
                                 const QFont &font, const QColor &textColor,
                                 const QColor &selectionColor, int selectionStart,
                                 int selectionEnd, const QString &searchQuery,
@@ -100,7 +78,7 @@ void TableChrome::paintCellText(QPainter *painter, const TableGeom &geom,
     const int selTo = qMax(selectionStart, selectionEnd);
     const bool searching = !searchQuery.isEmpty() && searchColor.isValid();
 
-    for (const TableCellGeom &cell : geom.cells) {
+    for (const TableGeometry::Cell &cell : geom.cells) {
         if (cell.text.isEmpty() && selFrom == selTo)
             continue;
 
@@ -168,7 +146,7 @@ void TableChrome::paintTables(QPainter *painter, QTextDocument *document,
                     selectionColor);
 }
 
-void TableChrome::paintGeometries(QPainter *painter, const QVector<TableGeom> &geoms,
+void TableChrome::paintGeometries(QPainter *painter, const QVector<TableGeometry::Table> &geoms,
                                   QTextDocument *document, const QColor &text,
                                   const QColor &rule, int selectionStart,
                                   int selectionEnd, const QColor &selectionColor) {
@@ -193,7 +171,7 @@ void TableChrome::paintGeometries(QPainter *painter, const QVector<TableGeom> &g
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing, false);
 
-    for (const TableGeom &geom : geoms) {
+    for (const TableGeometry::Table &geom : geoms) {
         painter->save();
         painter->setTransform(world);
         paintCellText(painter, geom, font, text, selectionColor,
@@ -206,7 +184,7 @@ void TableChrome::paintGeometries(QPainter *painter, const QVector<TableGeom> &g
     painter->resetTransform();
     painter->setRenderHint(QPainter::Antialiasing, false);
 
-    for (const TableGeom &geom : geoms) {
+    for (const TableGeometry::Table &geom : geoms) {
         const QRectF bounds = geom.box.bounds.normalized();
         if (bounds.width() < 2 || bounds.height() < 2)
             continue;
@@ -298,7 +276,7 @@ void TableChrome::setWrapWidth(qreal wrapWidth) {
     if (qAbs(m_wrapWidth - next) < 0.5)
         return;
     m_wrapWidth = next;
-    markLayoutDirty();
+    refreshTables();
     emit wrapWidthChanged();
     update();
 }
@@ -306,13 +284,13 @@ void TableChrome::setWrapWidth(qreal wrapWidth) {
 void TableChrome::setCursorPosition(int cursorPosition) {
     if (m_cursorPosition == cursorPosition)
         return;
-    const int oldRelevant = TableGeometry::layoutRelevantCursor(m_document, m_cursorPosition);
     m_cursorPosition = cursorPosition;
-    const int newRelevant = TableGeometry::layoutRelevantCursor(m_document, m_cursorPosition);
+    const int relevant = TableGeometry::layoutRelevantCursor(m_document, m_cursorPosition);
     emit cursorPositionChanged();
-    if (oldRelevant == newRelevant)
+    if (relevant == m_layoutCursor)
         return;
-    markLayoutDirty();
+    m_layoutCursor = relevant;
+    refreshTables();
     update();
 }
 
@@ -373,9 +351,16 @@ void TableChrome::refreshNaturalWidth() {
 }
 
 void TableChrome::markLayoutDirty() {
-    if (m_layoutDirty)
-        return;
     m_layoutDirty = true;
+}
+
+void TableChrome::refreshTables() {
+    m_tables = TableGeometry::geometriesFor(m_document, m_wrapWidth, m_cursorPosition);
+    m_layoutDirty = false;
+    const int sr = TableGeometry::structureRevision(m_document);
+    if (sr == m_lastStructureRevision)
+        return;
+    m_lastStructureRevision = sr;
     ++m_layoutRevision;
     emit layoutChanged();
 }
@@ -387,12 +372,12 @@ void TableChrome::ensureLayout() const {
     m_layoutDirty = false;
 }
 
-const TableCellGeom *TableChrome::cellAtPosition(int position) const {
+const TableGeometry::Cell *TableChrome::cellAtPosition(int position) const {
     ensureLayout();
-    const TableCellGeom *best = nullptr;
+    const TableGeometry::Cell *best = nullptr;
     int bestDistance = std::numeric_limits<int>::max();
-    for (const TableGeom &table : m_tables) {
-        for (const TableCellGeom &cell : table.cells) {
+    for (const TableGeometry::Table &table : m_tables) {
+        for (const TableGeometry::Cell &cell : table.cells) {
             const int start = cell.blockPosition + cell.typingStart;
             const int end = cell.blockPosition + cell.typingEnd;
             if (position >= start && position <= end)
@@ -409,8 +394,8 @@ const TableCellGeom *TableChrome::cellAtPosition(int position) const {
         return nullptr;
 
     const int blockPosition = block.position();
-    for (const TableGeom &table : m_tables) {
-        for (const TableCellGeom &cell : table.cells) {
+    for (const TableGeometry::Table &table : m_tables) {
+        for (const TableGeometry::Cell &cell : table.cells) {
             if (cell.blockPosition != blockPosition)
                 continue;
             const int start = cell.blockPosition + cell.typingStart;
@@ -427,9 +412,9 @@ const TableCellGeom *TableChrome::cellAtPosition(int position) const {
 
 int TableChrome::hitTest(qreal x, qreal y) const {
     ensureLayout();
-    const TableGeom *hitTable = nullptr;
+    const TableGeometry::Table *hitTable = nullptr;
     int hitRow = -1;
-    for (const TableGeom &table : m_tables) {
+    for (const TableGeometry::Table &table : m_tables) {
         const QRectF bounds = table.box.bounds;
         if (y < bounds.top() || y > bounds.bottom())
             continue;
@@ -459,8 +444,8 @@ int TableChrome::hitTest(qreal x, qreal y) const {
         }
     }
 
-    const TableCellGeom *cell = nullptr;
-    for (const TableCellGeom &candidate : hitTable->cells) {
+    const TableGeometry::Cell *cell = nullptr;
+    for (const TableGeometry::Cell &candidate : hitTable->cells) {
         if (candidate.row == hitRow && candidate.column == hitColumn) {
             cell = &candidate;
             break;
@@ -499,7 +484,7 @@ int TableChrome::hitTest(qreal x, qreal y) const {
 }
 
 QRectF TableChrome::caretRect(int position) const {
-    const TableCellGeom *cell = cellAtPosition(position);
+    const TableGeometry::Cell *cell = cellAtPosition(position);
     if (!cell)
         return {};
 
@@ -558,10 +543,10 @@ bool TableChrome::positionInTable(int position) const {
 }
 
 int TableChrome::movePositionVertically(int position, int direction) const {
-    const TableCellGeom *cellPtr = cellAtPosition(position);
+    const TableGeometry::Cell *cellPtr = cellAtPosition(position);
     if (!cellPtr)
         return -1;
-    const TableCellGeom cell = *cellPtr;
+    const TableGeometry::Cell cell = *cellPtr;
 
     QFont font = m_document ? m_document->defaultFont() : QFont();
     if (cell.header)
@@ -583,9 +568,9 @@ int TableChrome::movePositionVertically(int position, int direction) const {
     }
 
     const int nextRow = cell.row + (direction > 0 ? 1 : -1);
-    for (const TableGeom &table : m_tables) {
+    for (const TableGeometry::Table &table : m_tables) {
         bool owns = false;
-        for (const TableCellGeom &candidate : table.cells) {
+        for (const TableGeometry::Cell &candidate : table.cells) {
             if (candidate.blockPosition == cell.blockPosition
                     && candidate.column == cell.column) {
                 owns = true;
@@ -594,7 +579,7 @@ int TableChrome::movePositionVertically(int position, int direction) const {
         }
         if (!owns)
             continue;
-        for (const TableCellGeom &candidate : table.cells) {
+        for (const TableGeometry::Cell &candidate : table.cells) {
             if (candidate.row == nextRow && candidate.column == cell.column)
                 return candidate.blockPosition + candidate.contentStart;
         }
@@ -613,7 +598,8 @@ void TableChrome::bindDocument(QTextDocument *document) {
     m_document = document;
     m_lastDocumentWidth = -1;
     m_lastDocumentHeight = -1;
-    markLayoutDirty();
+    m_layoutCursor = std::numeric_limits<int>::min();
+    m_lastStructureRevision = 0;
     if (!m_document) {
         if (!qFuzzyIsNull(m_naturalWidth)) {
             m_naturalWidth = 0;
@@ -629,7 +615,7 @@ void TableChrome::bindDocument(QTextDocument *document) {
         // source. Row Y shifts arrive through documentSizeChanged.
         if (removed == 0 && added == 0)
             return;
-        markLayoutDirty();
+        refreshTables();
         refreshNaturalWidth();
         update();
     });
@@ -641,7 +627,7 @@ void TableChrome::bindDocument(QTextDocument *document) {
                 return;
             m_lastDocumentWidth = size.width();
             m_lastDocumentHeight = size.height();
-            markLayoutDirty();
+            refreshTables();
             refreshNaturalWidth();
             update();
         });
@@ -651,5 +637,6 @@ void TableChrome::bindDocument(QTextDocument *document) {
         m_lastDocumentWidth = size.width();
         m_lastDocumentHeight = size.height();
     }
+    refreshTables();
     refreshNaturalWidth();
 }

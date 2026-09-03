@@ -3,13 +3,14 @@
 #include "tablegeometry.h"
 
 #include <QColor>
-#include <QHash>
 #include <QObject>
 #include <QPointer>
 #include <QQuickPaintedItem>
 #include <QRectF>
 #include <QString>
 #include <QVector>
+
+#include <limits>
 
 class QPainter;
 class QTextDocument;
@@ -35,13 +36,9 @@ class TableChrome : public QQuickPaintedItem {
     Q_PROPERTY(int layoutRevision READ layoutRevision NOTIFY layoutChanged)
 
 public:
-    using TableBox = ::TableBox;
-
     explicit TableChrome(QQuickItem *parent = nullptr);
 
     static void registerQmlType();
-    static QVector<TableBox> collectTables(QTextDocument *document);
-    static QVector<TableBox> collectTables(QTextDocument *document, qreal wrapWidth);
     static void paintTables(QPainter *painter, QTextDocument *document,
                             const QColor &paper, const QColor &text,
                             const QColor &rule);
@@ -51,10 +48,6 @@ public:
                             int selectionStart = 0, int selectionEnd = 0,
                             const QColor &selectionColor = QColor(),
                             int cursorPosition = -1);
-    static qreal naturalWidthOf(QTextDocument *document);
-    static QHash<int, qreal> dataRowHeights(QTextDocument *document, qreal wrapWidth,
-                                            int cursorPosition = -1);
-    static int layoutRelevantCursor(QTextDocument *document, int cursorPosition);
 
     QObject *textDocument() const { return m_textDocumentObject; }
     void setTextDocument(QObject *textDocument);
@@ -119,13 +112,14 @@ private:
     void syncTextureSize();
     void refreshNaturalWidth();
     void markLayoutDirty();
+    void refreshTables();
     void ensureLayout() const;
-    const TableCellGeom *cellAtPosition(int position) const;
-    static void paintGeometries(QPainter *painter, const QVector<TableGeom> &geoms,
+    const TableGeometry::Cell *cellAtPosition(int position) const;
+    static void paintGeometries(QPainter *painter, const QVector<TableGeometry::Table> &geoms,
                                 QTextDocument *document, const QColor &text,
                                 const QColor &rule, int selectionStart,
                                 int selectionEnd, const QColor &selectionColor);
-    static void paintCellText(QPainter *painter, const TableGeom &geom,
+    static void paintCellText(QPainter *painter, const TableGeometry::Table &geom,
                               const QFont &font, const QColor &textColor,
                               const QColor &selectionColor,
                               int selectionStart, int selectionEnd,
@@ -144,11 +138,13 @@ private:
     qreal m_wrapWidth = 0;
     qreal m_naturalWidth = 0;
     int m_cursorPosition = 0;
+    int m_layoutCursor = std::numeric_limits<int>::min();
     int m_selectionStart = 0;
     int m_selectionEnd = 0;
     int m_layoutRevision = 0;
+    int m_lastStructureRevision = 0;
     qreal m_lastDocumentWidth = -1;
     qreal m_lastDocumentHeight = -1;
     mutable bool m_layoutDirty = true;
-    mutable QVector<TableGeom> m_tables;
+    mutable QVector<TableGeometry::Table> m_tables;
 };

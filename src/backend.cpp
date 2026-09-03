@@ -808,16 +808,16 @@ void Backend::setTableWrapWidth(qreal tableWrapWidth) {
 void Backend::setTableCaretPosition(int tableCaretPosition) {
     if (m_tableCaretPosition == tableCaretPosition)
         return;
-    const int oldRelevant = TableGeometry::layoutRelevantCursor(m_document, m_tableCaretPosition);
     m_tableCaretPosition = tableCaretPosition;
     emit tableCaretPositionChanged();
+    const int relevant = TableGeometry::layoutRelevantCursor(m_document, m_tableCaretPosition);
+    const bool sameLayout = relevant == m_tableLayoutCursor;
+    m_tableLayoutCursor = relevant;
     // Overlay wrap follows the caret only when padding becomes visible.
     // Typing restretches via editorTextChanged; do not open a new undo block.
-    if (!m_document || m_loading || m_formattingTypography)
+    if (!m_document || m_loading || m_formattingTypography || sameLayout)
         return;
     if (currentDocumentText() != m_lastDocumentText)
-        return;
-    if (oldRelevant == TableGeometry::layoutRelevantCursor(m_document, m_tableCaretPosition))
         return;
     restretchTableTypography(false);
 }
