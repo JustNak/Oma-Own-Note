@@ -28,9 +28,12 @@ ApplicationWindow {
     readonly property real textScale: backend.textScale
     readonly property real zoomFactor: backend.zoomFactor
     readonly property int editorFontPixelSize: scaledSize(20)
-    readonly property int editorWidth: Math.min(
-        Math.round(writerFontMetrics.averageCharacterWidth * 65),
-        Math.max(360, width - Math.round(writerFontMetrics.averageCharacterWidth * 20)))
+    // Visual writing column fills the window minus the flickable's 24px
+    // side gutters. Bind to window width so the column exists before the
+    // flickable is laid out; editorFlick.width is 0 until then and would
+    // restretch tables as an undo step. Canvas zoom (Item.scale) does not
+    // change this width.
+    readonly property int editorWidth: Math.max(360, width - 48)
     property bool closeConfirmed: false
     property bool searchOpen: false
     property bool searchUpdating: false
@@ -75,12 +78,6 @@ ApplicationWindow {
         } else if (action === "open") {
             backend.open(pendingOpenUrl);
         }
-    }
-
-    FontMetrics {
-        id: writerFontMetrics
-        font.family: "iA Writer Mono S"
-        font.pixelSize: win.editorFontPixelSize
     }
 
     // Every hardcoded size in the interface is expressed at text scale 1.
@@ -458,7 +455,7 @@ ApplicationWindow {
             anchors.leftMargin: 24
             anchors.rightMargin: 24
             clip: true
-            contentWidth: Math.max(width, canvas.x + canvas.width * canvas.scale + 24)
+            contentWidth: Math.max(width, canvas.x + canvas.width * canvas.scale)
             contentHeight: Math.max(height, canvas.y + (editor.implicitHeight + 20) * canvas.scale + 220)
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: ScrollBar {
@@ -811,8 +808,8 @@ ApplicationWindow {
                 id: editor
                 objectName: "sourceEditor"
                 x: 0
-                // Inverse of canvas.scale so wrap still fills the 65-character
-                // column after zoom. Tables wrap inside this column instead of
+                // Inverse of canvas.scale so wrap still fills the window column
+                // after zoom. Tables wrap inside this column instead of
                 // growing the editor sideways.
                 width: Math.round(win.editorWidth / Math.max(win.zoomFactor, 0.01))
                 height: parent.height

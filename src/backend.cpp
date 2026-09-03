@@ -34,7 +34,6 @@
 #include <QWindow>
 
 #include <algorithm>
-#include <optional>
 
 // QTextDocument::setUndoRedoEnabled(false) clears the stack. The private
 // undoEnabled flag is the only way to apply format-only caret restretch.
@@ -819,10 +818,10 @@ void Backend::setTableCaretPosition(int tableCaretPosition) {
         return;
     if (currentDocumentText() != m_lastDocumentText)
         return;
-    restretchTableTypography(false);
+    restretchTableTypography();
 }
 
-void Backend::restretchTableTypography(bool recordUndo) {
+void Backend::restretchTableTypography() {
     if (!m_document)
         return;
 
@@ -831,23 +830,14 @@ void Backend::restretchTableTypography(bool recordUndo) {
     if (heights == m_appliedTableHeights)
         return;
 
-    // Wrap-width restretch is not a user edit. Do not join the previous
-    // typing command (that made undo revert text and restore stale heights).
-    // Caret restretch must not record undo: a format-only command would
-    // intercept Ctrl+Z and leave overlay wrap out of sync with the document.
+    // Wrap-width and caret restretch are view layout, not user edits.
+    // Recording them intercepts Ctrl+Z after a window resize or padding reveal.
     const bool wasModified = m_document->isModified();
     m_formattingTypography = true;
-    std::optional<PauseDocumentUndo> pauseUndo;
-    if (!recordUndo)
-        pauseUndo.emplace(m_document);
+    PauseDocumentUndo pauseUndo(m_document);
     QTextCursor cursor(m_document);
-    if (recordUndo)
-        cursor.beginEditBlock();
     for (QTextBlock block = m_document->begin(); block.isValid(); block = block.next())
         applyBlockLineHeight(cursor, block, heights);
-    if (recordUndo)
-        cursor.endEditBlock();
-    pauseUndo.reset();
     m_formattingTypography = false;
     m_document->setModified(wasModified);
     m_appliedTableHeights = heights;
@@ -880,9 +870,8 @@ void Backend::reapplyTypographyToChange() {
     if (!m_document)
         return;
 
-    // Format only the block(s) touched by the last edit instead of the whole
-    // document, and fold the change into the preceding edit command so a single
-    // undo reverts both the text and its formatting.
+    // Format only the block(s) touched by the last edit. Line heights follow
+    // current wrap and stay off the undo stack so Ctrl+Z reverts text alone.
     const int maxPos = m_document->characterCount() - 1;
     const int start = qBound(0, m_lastChangePos, maxPos);
     const int end = qBound(start, m_lastChangePos + m_lastChangeAdded, maxPos);
@@ -909,9 +898,12 @@ void Backend::reapplyTypographyToChange() {
     if (!tablesChanged && !nearbyChanged)
         return;
 
+    // Height restretch is view layout. Joining it into an undo/redo contents
+    // change records a new format command and discards redo after a resize.
+    const bool wasModified = m_document->isModified();
     m_formattingTypography = true;
+    PauseDocumentUndo pauseUndo(m_document);
     QTextCursor cursor(m_document);
-    cursor.joinPreviousEditBlock();
     for (QTextBlock nearbyBlock = block; nearbyBlock.isValid() && nearbyBlock != stop;
          nearbyBlock = nearbyBlock.next())
         applyBlockLineHeight(cursor, nearbyBlock, heights);
@@ -923,6 +915,6 @@ void Backend::reapplyTypographyToChange() {
         }
         m_appliedTableHeights = heights;
     }
-    cursor.endEditBlock();
     m_formattingTypography = false;
+    m_document->setModified(wasModified);
 }
