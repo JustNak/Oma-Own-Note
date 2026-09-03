@@ -6,6 +6,7 @@
 #include <QFontMetricsF>
 #include <QHash>
 #include <QList>
+#include <QObject>
 #include <QPainter>
 #include <QQuickTextDocument>
 #include <QSize>
@@ -132,36 +133,6 @@ static CellSpan cellSpanFor(const QString &line, const MarkdownHighlighter::Span
                                 span.typingStart, span.typingEnd,
                                 blockPosition, cursorPosition);
     return span;
-}
-
-static CellSpan contentOnlySpan(const QString &line, const MarkdownHighlighter::Span &cell) {
-    CellSpan span;
-    typingSpan(line, cell, &span.typingStart, &span.typingEnd);
-    contentSpan(line, cell, &span.contentStart, &span.contentEnd, &span.text);
-    return span;
-}
-
-// Trailing padding only changes overlay wrap when the caret sits in it.
-// Arrow keys inside trimmed cell text must not rebuild every table.
-static int layoutRelevantCursor(QTextDocument *document, int cursorPosition) {
-    if (!document || cursorPosition < 0)
-        return -1;
-    const QTextBlock block = document->findBlock(cursorPosition);
-    if (!block.isValid()
-            || !MarkdownHighlighter::isTableRow(block.text())
-            || MarkdownHighlighter::isTableSeparator(block.text())
-            || block.userState() == 1)
-        return -1;
-    const QString line = block.text();
-    const MarkdownHighlighter::TableLine parsed = MarkdownHighlighter::parseTableLine(line);
-    const int blockPosition = block.position();
-    for (const MarkdownHighlighter::Span &cell : parsed.cells) {
-        const CellSpan visible = cellSpanFor(line, cell, blockPosition, cursorPosition);
-        const CellSpan trimmed = contentOnlySpan(line, cell);
-        if (visible.text != trimmed.text)
-            return cursorPosition;
-    }
-    return -1;
 }
 
 static qreal layoutCellHeight(const QString &text, const QFont &font, qreal width) {
@@ -449,22 +420,66 @@ QVector<TableChrome::TableGeom> TableChrome::buildGeometries(QTextDocument *docu
     return tables;
 }
 
+class TableChrome::GeomStore : public QObject {
+public:
+    explicit GeomStore(QTextDocument *parent)
+        : QObject(parent)
+    {
+    }
+
+    int revision = -1;
+    qreal wrapWidth = -1;
+    int layoutCursor = std::numeric_limits<int>::min();
+    qreal layoutWidth = -1;
+    qreal layoutHeight = -1;
+    QVector<TableGeom> tables;
+};
+
+TableChrome::GeomStore *TableChrome::storeFor(QTextDocument *document) {
+    if (!document)
+        return nullptr;
+    const QString name = QStringLiteral("oma.TableGeomStore");
+    if (QObject *existing = document->findChild<QObject *>(name, Qt::FindDirectChildrenOnly))
+        return static_cast<GeomStore *>(existing);
+    auto *store = new GeomStore(document);
+    store->setObjectName(name);
+    return store;
+}
+
+int TableChrome::layoutRelevantCursor(QTextDocument *document, int cursorPosition) {
+    if (!document || cursorPosition < 0)
+        return -1;
+    const QTextBlock block = document->findBlock(cursorPosition);
+    if (!block.isValid()
+            || !MarkdownHighlighter::isTableRow(block.text())
+            || MarkdownHighlighter::isTableSeparator(block.text())
+            || block.userState() == 1)
+        return -1;
+    const QString line = block.text();
+    const MarkdownHighlighter::TableLine parsed = MarkdownHighlighter::parseTableLine(line);
+    const int blockPosition = block.position();
+    for (const MarkdownHighlighter::Span &cell : parsed.cells) {
+        int typingStart = 0;
+        int typingEnd = 0;
+        int contentStart = 0;
+        int contentEnd = 0;
+        QString text;
+        typingSpan(line, cell, &typingStart, &typingEnd);
+        contentSpan(line, cell, &contentStart, &contentEnd, &text);
+        const int visibleEnd = visibleEndForCursor(line, contentEnd, typingStart, typingEnd,
+                                                   blockPosition, cursorPosition);
+        if (visibleEnd > contentEnd)
+            return cursorPosition;
+    }
+    return -1;
+}
+
 QVector<TableChrome::TableGeom> TableChrome::geometriesFor(QTextDocument *document,
                                                            qreal wrapWidth,
                                                            int cursorPosition) {
-    struct Cache {
-        QPointer<QTextDocument> document;
-        int revision = -1;
-        qreal wrapWidth = -1;
-        int layoutCursor = std::numeric_limits<int>::min();
-        qreal layoutWidth = -1;
-        qreal layoutHeight = -1;
-        QVector<TableGeom> tables;
-    };
-    static Cache cache;
-
-    const int revision = document ? document->revision() : -1;
     const int layoutCursor = layoutRelevantCursor(document, cursorPosition);
+    GeomStore *store = storeFor(document);
+    const int revision = document ? document->revision() : -1;
     const qreal cap = effectiveWrapWidth(document, wrapWidth);
     qreal layoutWidth = 0;
     qreal layoutHeight = 0;
@@ -476,22 +491,24 @@ QVector<TableChrome::TableGeom> TableChrome::geometriesFor(QTextDocument *docume
         }
     }
 
-    if (cache.document == document
-            && cache.revision == revision
-            && cache.layoutCursor == layoutCursor
-            && qAbs(cache.wrapWidth - cap) < 0.5
-            && qAbs(cache.layoutWidth - layoutWidth) < 0.5
-            && qAbs(cache.layoutHeight - layoutHeight) < 0.5)
-        return cache.tables;
+    if (store
+            && store->revision == revision
+            && store->layoutCursor == layoutCursor
+            && qAbs(store->wrapWidth - cap) < 0.5
+            && qAbs(store->layoutWidth - layoutWidth) < 0.5
+            && qAbs(store->layoutHeight - layoutHeight) < 0.5)
+        return store->tables;
 
-    cache.document = document;
-    cache.revision = revision;
-    cache.wrapWidth = cap;
-    cache.layoutCursor = layoutCursor;
-    cache.layoutWidth = layoutWidth;
-    cache.layoutHeight = layoutHeight;
-    cache.tables = buildGeometries(document, wrapWidth, cursorPosition);
-    return cache.tables;
+    QVector<TableGeom> tables = buildGeometries(document, wrapWidth, layoutCursor);
+    if (!store)
+        return tables;
+    store->revision = revision;
+    store->wrapWidth = cap;
+    store->layoutCursor = layoutCursor;
+    store->layoutWidth = layoutWidth;
+    store->layoutHeight = layoutHeight;
+    store->tables = tables;
+    return tables;
 }
 
 QVector<TableChrome::TableBox> TableChrome::collectTables(QTextDocument *document) {

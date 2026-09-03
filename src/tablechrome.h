@@ -57,6 +57,7 @@ public:
     static qreal naturalWidthOf(QTextDocument *document);
     static QHash<int, qreal> dataRowHeights(QTextDocument *document, qreal wrapWidth,
                                             int cursorPosition = -1);
+    static int layoutRelevantCursor(QTextDocument *document, int cursorPosition);
 
     QObject *textDocument() const { return m_textDocumentObject; }
     void setTextDocument(QObject *textDocument);
@@ -146,6 +147,8 @@ private:
     void markLayoutDirty();
     void ensureLayout() const;
     const CellGeom *cellAtPosition(int position) const;
+    class GeomStore;
+    static GeomStore *storeFor(QTextDocument *document);
     static QVector<TableGeom> buildGeometries(QTextDocument *document, qreal wrapWidth,
                                               int cursorPosition = -1);
     static QVector<TableGeom> geometriesFor(QTextDocument *document, qreal wrapWidth,

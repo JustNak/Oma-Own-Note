@@ -1066,6 +1066,8 @@ private slots:
             TableChrome::dataRowHeights(&document, 2000, -1);
         QCOMPARE(atHello, atNext);
         QCOMPARE(atHello, outside);
+        QCOMPARE(TableChrome::layoutRelevantCursor(&document, hello), -1);
+        QCOMPARE(TableChrome::layoutRelevantCursor(&document, hello + 3), -1);
     }
 
     void tableContentCaretDoesNotRestretch() {

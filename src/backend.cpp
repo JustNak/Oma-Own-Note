@@ -2,6 +2,7 @@
 
 #include "markdownhighlighter.h"
 #include "tablechrome.h"
+#include "tabletypography.h"
 
 #include <QClipboard>
 #include <QColor>
@@ -10,7 +11,6 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QDesktopServices>
-#include <QFont>
 #include <QGuiApplication>
 #include <QHash>
 #include <QMimeData>
@@ -26,10 +26,8 @@
 #include <QLockFile>
 #include <QSaveFile>
 #include <QTextBlock>
-#include <QTextBlockFormat>
 #include <QTextCursor>
 #include <QTextDocument>
-#include <QVector>
 #include <QTextStream>
 #include <QUrl>
 #include <QVariantMap>
@@ -44,7 +42,6 @@
 #include <private/qtextdocument_p.h>
 #undef private
 
-constexpr qreal typoraLineHeightPercent = 140;
 const QString lastSaveDirectorySetting = QStringLiteral("file/lastSaveDirectory");
 const QString zoomPercentSetting = QStringLiteral("view/zoomPercent");
 
@@ -69,8 +66,6 @@ private:
     bool m_wasUndo;
 };
 }
-
-static bool rangeNeedsTableTypography(QTextDocument *document, int position, int added);
 
 QString Backend::normalizedLinkUrl(const QString &clipboardText) {
     QString candidate = clipboardText.trimmed();
@@ -800,76 +795,6 @@ void Backend::scheduleWordCount() {
     m_wordCountTimer.start();
 }
 
-static bool rangeNeedsTableTypography(QTextDocument *document, int position, int added)
-{
-    if (!document)
-        return false;
-
-    const int maxPos = qMax(0, document->characterCount() - 1);
-    const int start = qBound(0, position, maxPos);
-    const int end = qBound(start, position + added, maxPos);
-    QTextBlock block = document->findBlock(start);
-    if (block.isValid() && block.previous().isValid())
-        block = block.previous();
-    const QTextBlock last = document->findBlock(end);
-    const QTextBlock stop = last.isValid() && last.next().isValid() ? last.next().next()
-                                                                   : QTextBlock();
-    for (; block.isValid() && block != stop; block = block.next()) {
-        if (MarkdownHighlighter::isTableRow(block.text())
-                || block.blockFormat().nonBreakableLines())
-            return true;
-    }
-    return false;
-}
-
-static bool blockMatchesTableTypography(const QTextBlock &block,
-                                        const QHash<int, qreal> &tableRowHeights) {
-    const QTextBlockFormat format = block.blockFormat();
-    const QTextDocument *document = block.document();
-    const QFont font = document ? document->defaultFont() : QFont();
-    if (MarkdownHighlighter::isTableSeparator(block.text())) {
-        return format.lineHeight() == MarkdownHighlighter::tableSeparatorLineHeight
-                && format.lineHeightType() == QTextBlockFormat::FixedHeight
-                && format.nonBreakableLines();
-    }
-    if (MarkdownHighlighter::isTableRow(block.text())) {
-        const qreal height = tableRowHeights.value(
-            block.position(), MarkdownHighlighter::tableDataRowLineHeight(font));
-        return format.lineHeight() == height
-                && format.lineHeightType() == QTextBlockFormat::MinimumHeight
-                && format.nonBreakableLines();
-    }
-    return format.lineHeight() == typoraLineHeightPercent
-            && format.lineHeightType() == QTextBlockFormat::ProportionalHeight
-            && !format.nonBreakableLines();
-}
-
-static void applyBlockLineHeight(QTextCursor &cursor, const QTextBlock &block,
-                                 const QHash<int, qreal> &tableRowHeights) {
-    if (blockMatchesTableTypography(block, tableRowHeights))
-        return;
-    QTextBlockFormat format = block.blockFormat();
-    format.setTopMargin(0);
-    format.setBottomMargin(0);
-    const QTextDocument *document = block.document();
-    const QFont font = document ? document->defaultFont() : QFont();
-    if (MarkdownHighlighter::isTableSeparator(block.text())) {
-        format.setLineHeight(MarkdownHighlighter::tableSeparatorLineHeight,
-                             QTextBlockFormat::FixedHeight);
-        format.setNonBreakableLines(true);
-    } else if (MarkdownHighlighter::isTableRow(block.text())) {
-        const qreal height = tableRowHeights.value(
-            block.position(), MarkdownHighlighter::tableDataRowLineHeight(font));
-        format.setLineHeight(height, QTextBlockFormat::MinimumHeight);
-        format.setNonBreakableLines(true);
-    } else {
-        format.setLineHeight(typoraLineHeightPercent, QTextBlockFormat::ProportionalHeight);
-        format.setNonBreakableLines(false);
-    }
-    cursor.setPosition(block.position());
-    cursor.setBlockFormat(format);
-}
-
 void Backend::setTableWrapWidth(qreal tableWrapWidth) {
     const qreal next = qMax(tableWrapWidth, qreal(0));
     if (qAbs(m_tableWrapWidth - next) < 0.5)
@@ -883,15 +808,18 @@ void Backend::setTableWrapWidth(qreal tableWrapWidth) {
 void Backend::setTableCaretPosition(int tableCaretPosition) {
     if (m_tableCaretPosition == tableCaretPosition)
         return;
+    const int oldRelevant = TableChrome::layoutRelevantCursor(m_document, m_tableCaretPosition);
     m_tableCaretPosition = tableCaretPosition;
     emit tableCaretPositionChanged();
-    // Overlay wrap geometry follows the caret (padding spaces become visible).
-    // Typing already restretches via editorTextChanged; starting a new edit
-    // block here would split that undo join. Arrow/click does not change
-    // document text, so restretch the row heights to match the overlay.
-    if (m_document && !m_loading && !m_formattingTypography
-            && currentDocumentText() == m_lastDocumentText)
-        restretchTableTypography(false);
+    // Overlay wrap follows the caret only when padding becomes visible.
+    // Typing restretches via editorTextChanged; do not open a new undo block.
+    if (!m_document || m_loading || m_formattingTypography)
+        return;
+    if (currentDocumentText() != m_lastDocumentText)
+        return;
+    if (oldRelevant == TableChrome::layoutRelevantCursor(m_document, m_tableCaretPosition))
+        return;
+    restretchTableTypography(false);
 }
 
 void Backend::restretchTableTypography(bool recordUndo) {
@@ -971,12 +899,12 @@ void Backend::reapplyTypographyToChange() {
                                                               : QTextBlock();
 
     bool nearbyChanged = false;
-    QVector<QTextBlock> nearby;
-    for (QTextBlock cursorBlock = block; cursorBlock.isValid() && cursorBlock != stop;
-         cursorBlock = cursorBlock.next()) {
-        nearby.append(cursorBlock);
-        if (!blockMatchesTableTypography(cursorBlock, heights))
+    for (QTextBlock nearbyBlock = block; nearbyBlock.isValid() && nearbyBlock != stop;
+         nearbyBlock = nearbyBlock.next()) {
+        if (!blockMatchesTableTypography(nearbyBlock, heights)) {
             nearbyChanged = true;
+            break;
+        }
     }
     if (!tablesChanged && !nearbyChanged)
         return;
@@ -984,7 +912,8 @@ void Backend::reapplyTypographyToChange() {
     m_formattingTypography = true;
     QTextCursor cursor(m_document);
     cursor.joinPreviousEditBlock();
-    for (const QTextBlock &nearbyBlock : nearby)
+    for (QTextBlock nearbyBlock = block; nearbyBlock.isValid() && nearbyBlock != stop;
+         nearbyBlock = nearbyBlock.next())
         applyBlockLineHeight(cursor, nearbyBlock, heights);
     if (tablesChanged) {
         for (auto it = heights.cbegin(); it != heights.cend(); ++it) {
