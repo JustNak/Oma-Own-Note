@@ -1159,7 +1159,8 @@ private slots:
         const QRectF atPad = chrome.caretRect(hello + 7);
         QVERIFY2(atPad.height() > 0 && atPad.x() > atWord.x() + 8,
                  "caret in trailing cell padding must sit in the revealed spaces");
-        QCOMPARE(chrome.layoutRevision(), revision);
+        QVERIFY2(chrome.layoutRevision() > revision,
+                 "revealed padding that widens a column must move overlay wrap");
     }
 
     void tableChromeTypingDoesNotDirtyUnwrappedRow() {
@@ -1178,18 +1179,20 @@ private slots:
         TableChrome chrome;
         chrome.setWrapWidth(2000);
         chrome.setTextDocument(&document);
-        const int hello = document.toPlainText().indexOf(QLatin1String("hello"));
-        chrome.setCursorPosition(hello + 5);
-        QVERIFY(chrome.caretRect(hello + 5).height() > 0);
+        const int bodyX = document.toPlainText().indexOf(QLatin1String("| x |"));
+        QVERIFY(bodyX >= 0);
+        const int xAt = bodyX + 2;
+        chrome.setCursorPosition(xAt + 1);
+        QVERIFY(chrome.caretRect(xAt + 1).height() > 0);
         const int revision = chrome.layoutRevision();
 
         QTextCursor cursor(&document);
-        cursor.setPosition(hello + 5);
-        cursor.insertText(QStringLiteral("x"));
-        chrome.setCursorPosition(hello + 6);
+        cursor.setPosition(xAt + 1);
+        cursor.insertText(QStringLiteral("z"));
+        chrome.setCursorPosition(xAt + 2);
 
         QCOMPARE(chrome.layoutRevision(), revision);
-        QVERIFY(chrome.caretRect(hello + 6).height() > 0);
+        QVERIFY(chrome.caretRect(xAt + 2).height() > 0);
     }
 
     void tableChromeIgnoresFormatOnlyContentsChange() {
