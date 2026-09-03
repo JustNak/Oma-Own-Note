@@ -28,9 +28,12 @@ ApplicationWindow {
     readonly property real textScale: backend.textScale
     readonly property real zoomFactor: backend.zoomFactor
     readonly property int editorFontPixelSize: scaledSize(20)
-    // Visual writing column fills the flickable. Window resize changes it.
-    // Canvas zoom (Item.scale) does not.
-    readonly property int editorWidth: Math.max(360, editorFlick.width)
+    // Visual writing column fills the window minus the flickable's 24px
+    // side gutters. Bind to window width so the column exists before the
+    // flickable is laid out; editorFlick.width is 0 until then and would
+    // restretch tables as an undo step. Canvas zoom (Item.scale) does not
+    // change this width.
+    readonly property int editorWidth: Math.max(360, width - 48)
     property bool closeConfirmed: false
     property bool searchOpen: false
     property bool searchUpdating: false

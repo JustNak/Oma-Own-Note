@@ -841,6 +841,8 @@ private slots:
         QCOMPARE(chrome->property("wrapWidth").toReal(), editor->property("width").toReal());
 
         backend.resetZoom();
+        quickWindow->resize(1280, 820);
+        QTRY_COMPARE(quickWindow->width(), 1280);
     }
 
     void tableInsertedRowsHaveEqualHeight() {
