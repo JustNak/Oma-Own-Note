@@ -2123,6 +2123,12 @@ private slots:
         QTest::keyClick(quickWindow, Qt::Key_Z, Qt::ControlModifier);
         QVERIFY2(!editor->property("text").toString().contains(QLatin1Char('a')),
                  "window-resize wrap restretch must not intercept the typing undo command");
+        QTest::keyClick(quickWindow, Qt::Key_Y, Qt::ControlModifier);
+        QVERIFY2(editor->property("text").toString().contains(QLatin1Char('a')),
+                 "wrap restretch after undo must not discard redo");
+        QTest::keyClick(quickWindow, Qt::Key_Z, Qt::ControlModifier);
+        QVERIFY2(!editor->property("text").toString().contains(QLatin1Char('a')),
+                 "wrap restretch after redo must not become its own undo step");
 
         quickWindow->resize(1280, 820);
         QTRY_COMPARE(quickWindow->width(), 1280);
