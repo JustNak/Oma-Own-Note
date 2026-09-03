@@ -2077,8 +2077,55 @@ private slots:
 
         backend.setTableWrapWidth(160);
         QTest::keyClick(quickWindow, Qt::Key_Z, Qt::ControlModifier);
-        QVERIFY2(editor->property("text").toString().contains(QLatin1Char('a')),
-                 "wrap-width restretch must not consume the typing undo command");
+        QVERIFY2(!editor->property("text").toString().contains(QLatin1Char('a')),
+                 "wrap-width restretch must not intercept the typing undo command");
+    }
+
+    void windowResizeDoesNotInterceptTypingUndo() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QVERIFY(editor);
+        const QString longCell(80, QLatin1Char('w'));
+        editor->setProperty("text",
+                            QStringLiteral("| ") + longCell
+                            + QStringLiteral(" | x |\n| --- | --- |\n| y | z |\n"));
+        editor->setProperty("cursorPosition", 2);
+        QVERIFY(QMetaObject::invokeMethod(editor, "forceActiveFocus"));
+
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
+        QVERIFY(quickWindow);
+        QTRY_VERIFY(quickWindow->width() > 1000);
+
+        auto *quickDocument = qobject_cast<QQuickTextDocument *>(
+            qvariant_cast<QObject *>(editor->property("textDocument")));
+        QVERIFY(quickDocument);
+        QTextDocument *document = quickDocument->textDocument();
+        QVERIFY(document);
+
+        QTest::keyClick(quickWindow, Qt::Key_A);
+        QVERIFY(editor->property("text").toString().contains(QLatin1Char('a')));
+        const qreal heightBefore = document->begin().blockFormat().lineHeight();
+
+        quickWindow->resize(720, quickWindow->height());
+        QTRY_VERIFY(editor->property("width").toReal() < 800);
+        QTRY_VERIFY(document->begin().blockFormat().lineHeight() > heightBefore + 4);
+
+        QTest::keyClick(quickWindow, Qt::Key_Z, Qt::ControlModifier);
+        QVERIFY2(!editor->property("text").toString().contains(QLatin1Char('a')),
+                 "window-resize wrap restretch must not intercept the typing undo command");
+
+        quickWindow->resize(1280, 820);
+        QTRY_COMPARE(quickWindow->width(), 1280);
     }
 
     void tableChromeTextureFollowsCanvasZoom() {
