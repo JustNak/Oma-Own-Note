@@ -1,5 +1,7 @@
 #pragma once
 
+#include "tablegeometry.h"
+
 #include <QColor>
 #include <QHash>
 #include <QObject>
@@ -33,12 +35,7 @@ class TableChrome : public QQuickPaintedItem {
     Q_PROPERTY(int layoutRevision READ layoutRevision NOTIFY layoutChanged)
 
 public:
-    struct TableBox {
-        QRectF bounds;
-        QRectF header;
-        QVector<qreal> columns;
-        QVector<qreal> rowEdges;
-    };
+    using TableBox = ::TableBox;
 
     explicit TableChrome(QQuickItem *parent = nullptr);
 
@@ -118,41 +115,12 @@ protected:
     void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
 
 private:
-    struct CellGeom {
-        int row = 0;
-        int column = 0;
-        int blockPosition = 0;
-        int contentStart = 0;
-        int contentEnd = 0;
-        int typingStart = 0;
-        int typingEnd = 0;
-        QRectF rect;
-        QRectF textRect;
-        QString text;
-        bool header = false;
-    };
-
-    struct TableGeom {
-        TableBox box;
-        QVector<CellGeom> cells;
-        QVector<int> rowBlockPositions;
-        // Block line heights per data row. Unlike rowEdges these exclude the
-        // separator line folded into the header's edge.
-        QVector<qreal> rowHeights;
-    };
-
     void bindDocument(QTextDocument *document);
     void syncTextureSize();
     void refreshNaturalWidth();
     void markLayoutDirty();
     void ensureLayout() const;
-    const CellGeom *cellAtPosition(int position) const;
-    class GeomStore;
-    static GeomStore *storeFor(QTextDocument *document);
-    static QVector<TableGeom> buildGeometries(QTextDocument *document, qreal wrapWidth,
-                                              int cursorPosition = -1);
-    static QVector<TableGeom> geometriesFor(QTextDocument *document, qreal wrapWidth,
-                                            int cursorPosition);
+    const TableCellGeom *cellAtPosition(int position) const;
     static void paintGeometries(QPainter *painter, const QVector<TableGeom> &geoms,
                                 QTextDocument *document, const QColor &text,
                                 const QColor &rule, int selectionStart,
@@ -179,6 +147,8 @@ private:
     int m_selectionStart = 0;
     int m_selectionEnd = 0;
     int m_layoutRevision = 0;
+    qreal m_lastDocumentWidth = -1;
+    qreal m_lastDocumentHeight = -1;
     mutable bool m_layoutDirty = true;
     mutable QVector<TableGeom> m_tables;
 };

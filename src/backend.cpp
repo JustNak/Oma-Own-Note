@@ -1,7 +1,7 @@
 #include "backend.h"
 
 #include "markdownhighlighter.h"
-#include "tablechrome.h"
+#include "tablegeometry.h"
 #include "tabletypography.h"
 
 #include <QClipboard>
@@ -808,7 +808,7 @@ void Backend::setTableWrapWidth(qreal tableWrapWidth) {
 void Backend::setTableCaretPosition(int tableCaretPosition) {
     if (m_tableCaretPosition == tableCaretPosition)
         return;
-    const int oldRelevant = TableChrome::layoutRelevantCursor(m_document, m_tableCaretPosition);
+    const int oldRelevant = TableGeometry::layoutRelevantCursor(m_document, m_tableCaretPosition);
     m_tableCaretPosition = tableCaretPosition;
     emit tableCaretPositionChanged();
     // Overlay wrap follows the caret only when padding becomes visible.
@@ -817,7 +817,7 @@ void Backend::setTableCaretPosition(int tableCaretPosition) {
         return;
     if (currentDocumentText() != m_lastDocumentText)
         return;
-    if (oldRelevant == TableChrome::layoutRelevantCursor(m_document, m_tableCaretPosition))
+    if (oldRelevant == TableGeometry::layoutRelevantCursor(m_document, m_tableCaretPosition))
         return;
     restretchTableTypography(false);
 }
@@ -826,7 +826,7 @@ void Backend::restretchTableTypography(bool recordUndo) {
     if (!m_document)
         return;
 
-    const QHash<int, qreal> heights = TableChrome::dataRowHeights(
+    const QHash<int, qreal> heights = TableGeometry::dataRowHeights(
         m_document, m_tableWrapWidth, m_tableCaretPosition);
     if (heights == m_appliedTableHeights)
         return;
@@ -864,7 +864,7 @@ void Backend::applyDocumentTypography() {
 
     m_formattingTypography = true;
     QTextCursor cursor(m_document);
-    const QHash<int, qreal> heights = TableChrome::dataRowHeights(
+    const QHash<int, qreal> heights = TableGeometry::dataRowHeights(
         m_document, m_tableWrapWidth, m_tableCaretPosition);
     for (QTextBlock block = m_document->begin(); block.isValid(); block = block.next())
         applyBlockLineHeight(cursor, block, heights);
@@ -887,7 +887,7 @@ void Backend::reapplyTypographyToChange() {
     const int start = qBound(0, m_lastChangePos, maxPos);
     const int end = qBound(start, m_lastChangePos + m_lastChangeAdded, maxPos);
 
-    const QHash<int, qreal> heights = TableChrome::dataRowHeights(
+    const QHash<int, qreal> heights = TableGeometry::dataRowHeights(
         m_document, m_tableWrapWidth, m_tableCaretPosition);
     const bool tablesChanged = heights != m_appliedTableHeights;
 

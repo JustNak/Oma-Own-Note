@@ -14,6 +14,7 @@
 #include <QStringList>
 #include <QTextBlock>
 #include <QTextBlockFormat>
+#include <QTextCharFormat>
 #include <QTextCursor>
 #include <QAbstractTextDocumentLayout>
 #include <QTextDocument>
@@ -1154,6 +1155,36 @@ private slots:
         chrome.setCursorPosition(hello + 7);
         QVERIFY2(chrome.layoutRevision() > revision,
                  "caret in trailing cell padding must rebuild overlay wrap");
+    }
+
+    void tableChromeIgnoresFormatOnlyContentsChange() {
+        QTextDocument document;
+        QFont font(QStringLiteral("monospace"));
+        font.setStyleHint(QFont::Monospace);
+        font.setFixedPitch(true);
+        font.setPixelSize(16);
+        document.setDefaultFont(font);
+        document.setPlainText(QStringLiteral(
+            "| hello | world |\n"
+            "| --- | --- |\n"
+            "| x | y |\n"));
+        document.setTextWidth(2000);
+
+        TableChrome chrome;
+        chrome.setWrapWidth(2000);
+        chrome.setTextDocument(&document);
+        const int hello = document.toPlainText().indexOf(QLatin1String("hello"));
+        chrome.setCursorPosition(hello);
+        QVERIFY(chrome.caretRect(hello).height() > 0);
+        const int revision = chrome.layoutRevision();
+
+        QTextCursor cursor(&document);
+        cursor.setPosition(hello);
+        QTextCharFormat format;
+        format.setForeground(QColor(Qt::red));
+        cursor.mergeCharFormat(format);
+
+        QCOMPARE(chrome.layoutRevision(), revision);
     }
 
     void tableSiblingColumnsGrowTogether() {
