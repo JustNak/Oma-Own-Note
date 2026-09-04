@@ -1563,6 +1563,86 @@ private slots:
                             .arg(past).arg(lastPipe)));
     }
 
+    void tableReplaceDoesNotKeepPriorColumnWidths() {
+        QTextDocument document;
+        QFont font(QStringLiteral("monospace"));
+        font.setStyleHint(QFont::Monospace);
+        font.setFixedPitch(true);
+        font.setPixelSize(16);
+        document.setDefaultFont(font);
+        document.setPlainText(QStringLiteral(
+            "| wwwwwwwwwwwwwwww | x |\n"
+            "| --- | --- |\n"
+            "| y | z |\n"));
+        document.setTextWidth(800);
+        const auto wide = TableGeometry::collectTables(&document, 800);
+        QCOMPARE(wide.size(), 1);
+        const qreal wideCol = wide.first().columns.at(1) - wide.first().columns.at(0);
+
+        document.setPlainText(QStringLiteral(
+            "| a | b |\n"
+            "| --- | --- |\n"
+            "| c | d |\n"));
+        const auto next = TableGeometry::collectTables(&document, 800);
+        QCOMPARE(next.size(), 1);
+        const qreal nextCol = next.first().columns.at(1) - next.first().columns.at(0);
+        QVERIFY2(nextCol + 20 < wideCol,
+                 qPrintable(QStringLiteral("replaced table kept prior inner: %1 vs wide %2")
+                            .arg(nextCol).arg(wideCol)));
+    }
+
+    void tableGrowRecomputesSiblingRowHeights() {
+        QTextDocument document;
+        QFont font(QStringLiteral("monospace"));
+        font.setStyleHint(QFont::Monospace);
+        font.setFixedPitch(true);
+        font.setPixelSize(16);
+        document.setDefaultFont(font);
+        QString longCell;
+        for (int i = 0; i < 24; ++i)
+            longCell += QStringLiteral("word ");
+        document.setPlainText(QStringLiteral("| a | b |\n| --- | --- |\n| x | ")
+                              + longCell.trimmed()
+                              + QStringLiteral(" |\n"));
+        const QFontMetricsF metrics(font);
+        const auto hugged = TableGeometry::collectTables(&document, 2000);
+        QCOMPARE(hugged.size(), 1);
+        const qreal cap = hugged.first().bounds.width() + document.documentMargin() + 2;
+        document.setTextWidth(cap);
+
+        TableChrome chrome;
+        chrome.setWrapWidth(cap);
+        chrome.setTextDocument(&document);
+        const int aAt = document.toPlainText().indexOf(QLatin1Char('a'));
+        chrome.setCursorPosition(aAt + 1);
+        QVERIFY(chrome.caretRect(aAt + 1).height() > 0);
+
+        QTextCursor cursor(&document);
+        for (const QChar ch : QStringLiteral("bcdefghij")) {
+            cursor.setPosition(document.toPlainText().indexOf(QLatin1Char('a')) + 1);
+            cursor.insertText(QString(ch));
+            chrome.setCursorPosition(cursor.position());
+        }
+
+        const auto geoms = TableGeometry::geometriesFor(&document, cap, cursor.position());
+        QCOMPARE(geoms.size(), 1);
+        const TableGeometry::Table &table = geoms.first();
+        const TableGeometry::Cell *body = nullptr;
+        for (const TableGeometry::Cell &cell : table.cells) {
+            if (cell.row == 1 && cell.column == 1)
+                body = &cell;
+        }
+        QVERIFY(body);
+        QTextLayout needed;
+        TableGeometry::prepareCellLayout(&needed, body->text, font,
+                                         qMax(qreal(1), body->textRect.width()));
+        QVERIFY2(table.rowHeights.at(1) + 0.5 >= needed.boundingRect().height(),
+                 qPrintable(QStringLiteral("stale body height %1 needed %2 inner %3")
+                            .arg(table.rowHeights.at(1))
+                            .arg(needed.boundingRect().height())
+                            .arg(body->textRect.width())));
+    }
+
     void tableTypingKeepsSpaces() {
         const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
         QVERIFY(!mainQmlPath.isEmpty());

@@ -192,9 +192,37 @@ qreal storedInner(const TableGeometry::Table &geom, int column) {
     return 0;
 }
 
+QString storedCellText(const TableGeometry::Table &geom, int row, int column) {
+    for (const TableGeometry::Cell &cell : geom.cells) {
+        if (cell.row == row && cell.column == column)
+            return cell.text;
+    }
+    return {};
+}
+
+int dirtyRowCount(const ParsedTable &parsed, const TableGeometry::Table &old) {
+    if (parsed.columns != old.box.columns.size() - 1
+            || parsed.dataRows.size() != old.rowBlockPositions.size())
+        return std::numeric_limits<int>::max();
+    int dirtyRows = 0;
+    for (int r = 0; r < parsed.dataRows.size(); ++r) {
+        for (int c = 0; c < parsed.columns; ++c) {
+            const QString text = c < parsed.rowSpans.at(r).size()
+                ? parsed.rowSpans.at(r).at(c).text : QString();
+            if (text != storedCellText(old, r, c)) {
+                ++dirtyRows;
+                break;
+            }
+        }
+        if (dirtyRows > 1)
+            return dirtyRows;
+    }
+    return dirtyRows;
+}
+
 bool stickAllocatedInners(ParsedTable *parsed, const TableGeometry::Table &old,
                           const MeasureContext &ctx) {
-    if (parsed->columns != old.box.columns.size() - 1)
+    if (dirtyRowCount(*parsed, old) > 1)
         return false;
     bool grew = false;
     for (int c = 0; c < parsed->columns; ++c) {
@@ -407,14 +435,6 @@ QVector<TableGeometry::Table> buildGeometries(QTextDocument *document, qreal wra
     return tables;
 }
 
-QString storedCellText(const TableGeometry::Table &geom, int row, int column) {
-    for (const TableGeometry::Cell &cell : geom.cells) {
-        if (cell.row == row && cell.column == column)
-            return cell.text;
-    }
-    return {};
-}
-
 uint layoutFingerprint(const QVector<TableGeometry::Table> &tables) {
     uint hash = 0;
     for (const TableGeometry::Table &table : tables) {
@@ -488,38 +508,33 @@ bool tryReuseLayout(GeomStore *store, QTextDocument *document, qreal wrapWidth,
     for (int t = 0; t < parsedTables.size(); ++t) {
         const ParsedTable &parsed = parsedTables.at(t);
         const TableGeometry::Table &old = store->tables.at(t);
-        if (parsed.columns != old.box.columns.size() - 1
-                || parsed.dataRows.size() != old.rowBlockPositions.size()
-                || parsed.dataRows.size() != old.rowHeights.size())
+        if (parsed.dataRows.size() != old.rowHeights.size()
+                || dirtyRowCount(parsed, old) > 1)
             return false;
 
         ParsedTable laidOut = parsed;
         const bool grew = stickAllocatedInners(&laidOut, old, ctx);
+        if (grew)
+            return false;
 
-        int dirtyRows = 0;
         int dirtyRow = -1;
         for (int r = 0; r < parsed.dataRows.size(); ++r) {
-            bool rowDirty = false;
             for (int c = 0; c < parsed.columns; ++c) {
                 const QString text = c < parsed.rowSpans.at(r).size()
                     ? parsed.rowSpans.at(r).at(c).text : QString();
                 if (text != storedCellText(old, r, c)) {
-                    rowDirty = true;
+                    dirtyRow = r;
                     break;
                 }
             }
-            if (!rowDirty)
-                continue;
-            ++dirtyRows;
-            dirtyRow = r;
-            if (dirtyRows > 1)
-                return false;
+            if (dirtyRow >= 0)
+                break;
         }
         if (dirtyRow >= 0
                 && qAbs(rowLayoutHeight(laidOut, dirtyRow, ctx) - old.rowHeights.at(dirtyRow)) > 0.5)
             return false;
 
-        const QVector<qreal> columnXs = grew ? columnXsFor(laidOut, ctx) : old.box.columns;
+        const QVector<qreal> columnXs = old.box.columns;
         QVector<qreal> rowEdges = old.box.rowEdges;
         const QRectF firstRow = layout->blockBoundingRect(parsed.dataRows.first());
         const qreal dy = firstRow.top() - rowEdges.first();
@@ -529,8 +544,6 @@ bool tryReuseLayout(GeomStore *store, QTextDocument *document, qreal wrapWidth,
                 edge += dy;
         }
         next.append(fillTable(laidOut, columnXs, rowEdges, old.rowHeights, ctx));
-        if (grew)
-            moved = true;
     }
 
     store->tables = next;
