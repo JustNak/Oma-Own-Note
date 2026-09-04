@@ -201,11 +201,11 @@ QString storedCellText(const TableGeometry::Table &geom, int row, int column) {
 }
 
 int dirtyRowCount(const ParsedTable &parsed, const TableGeometry::Table &old) {
-    if (parsed.columns != old.box.columns.size() - 1
-            || parsed.dataRows.size() != old.rowBlockPositions.size())
+    if (parsed.columns != old.box.columns.size() - 1)
         return std::numeric_limits<int>::max();
+    const int rows = qMin(parsed.dataRows.size(), old.rowBlockPositions.size());
     int dirtyRows = 0;
-    for (int r = 0; r < parsed.dataRows.size(); ++r) {
+    for (int r = 0; r < rows; ++r) {
         for (int c = 0; c < parsed.columns; ++c) {
             const QString text = c < parsed.rowSpans.at(r).size()
                 ? parsed.rowSpans.at(r).at(c).text : QString();
@@ -217,6 +217,8 @@ int dirtyRowCount(const ParsedTable &parsed, const TableGeometry::Table &old) {
         if (dirtyRows > 1)
             return dirtyRows;
     }
+    if (parsed.dataRows.size() != old.rowBlockPositions.size() && dirtyRows > 0)
+        return std::numeric_limits<int>::max();
     return dirtyRows;
 }
 

@@ -1591,6 +1591,43 @@ private slots:
                             .arg(nextCol).arg(wideCol)));
     }
 
+    void tableAppendedRowKeepsAllocatedWidths() {
+        QTextDocument document;
+        QFont font(QStringLiteral("monospace"));
+        font.setStyleHint(QFont::Monospace);
+        font.setFixedPitch(true);
+        font.setPixelSize(16);
+        document.setDefaultFont(font);
+        document.setPlainText(QStringLiteral(
+            "| wwwwwwwwwwwwwwww | x |\n"
+            "| --- | --- |\n"
+            "| y | z |\n"));
+        document.setTextWidth(800);
+        const auto wide = TableGeometry::collectTables(&document, 800);
+        QCOMPARE(wide.size(), 1);
+        const qreal wideCol = wide.first().columns.at(1) - wide.first().columns.at(0);
+
+        QTextCursor cursor(&document);
+        const int wAt = document.toPlainText().indexOf(QLatin1Char('w'));
+        cursor.setPosition(wAt + 1);
+        cursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 15);
+        cursor.removeSelectedText();
+        const auto shrunk = TableGeometry::collectTables(&document, 800);
+        QCOMPARE(shrunk.size(), 1);
+        QVERIFY2(qAbs((shrunk.first().columns.at(1) - shrunk.first().columns.at(0)) - wideCol) < 0.5,
+                 QByteArray("delete already dropped allocated inner"));
+
+        cursor.movePosition(QTextCursor::End);
+        cursor.insertText(QStringLiteral("|     |     |\n"));
+        const auto next = TableGeometry::collectTables(&document, 800);
+        QCOMPARE(next.size(), 1);
+        QCOMPARE(next.first().rowEdges.size(), wide.first().rowEdges.size() + 1);
+        const qreal nextCol = next.first().columns.at(1) - next.first().columns.at(0);
+        QVERIFY2(qAbs(nextCol - wideCol) < 0.5,
+                 qPrintable(QStringLiteral("appended row snapped inner %1 vs allocated %2")
+                            .arg(nextCol).arg(wideCol)));
+    }
+
     void tableGrowRecomputesSiblingRowHeights() {
         QTextDocument document;
         QFont font(QStringLiteral("monospace"));
