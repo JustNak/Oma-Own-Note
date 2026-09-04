@@ -184,6 +184,33 @@ void finishParsedInners(ParsedTable *parsed, const MeasureContext &ctx) {
         parsed->inners = shrinkInners(parsed->inners, ctx.minInner, total - available);
 }
 
+qreal storedInner(const TableGeometry::Table &geom, int column) {
+    for (const TableGeometry::Cell &cell : geom.cells) {
+        if (cell.column == column)
+            return cell.textRect.width();
+    }
+    return 0;
+}
+
+bool stickAllocatedInners(ParsedTable *parsed, const TableGeometry::Table &old,
+                          const MeasureContext &ctx) {
+    if (parsed->columns != old.box.columns.size() - 1)
+        return false;
+    bool grew = false;
+    for (int c = 0; c < parsed->columns; ++c) {
+        const qreal stored = storedInner(old, c);
+        const qreal measured = parsed->inners.at(c);
+        if (measured <= stored + 0.5) {
+            parsed->inners[c] = stored;
+            continue;
+        }
+        parsed->inners[c] = measured + ctx.minInner;
+        grew = true;
+    }
+    finishParsedInners(parsed, ctx);
+    return grew;
+}
+
 QVector<qreal> columnXsFor(const ParsedTable &parsed, const MeasureContext &ctx) {
     QVector<qreal> columnXs;
     qreal x = ctx.margin + ctx.pipeAdvance * 0.5;
@@ -340,7 +367,8 @@ QVector<ParsedTable> parseTables(QTextDocument *document, int layoutCursor,
 }
 
 QVector<TableGeometry::Table> buildGeometries(QTextDocument *document, qreal wrapWidth,
-                                              int layoutCursor) {
+                                              int layoutCursor,
+                                              const QVector<TableGeometry::Table> *previous) {
     QVector<TableGeometry::Table> tables;
     if (!document)
         return tables;
@@ -350,7 +378,10 @@ QVector<TableGeometry::Table> buildGeometries(QTextDocument *document, qreal wra
 
     const MeasureContext ctx = measureContext(document, wrapWidth);
     const QVector<ParsedTable> parsedTables = parseTables(document, layoutCursor, ctx);
-    for (const ParsedTable &parsed : parsedTables) {
+    for (int t = 0; t < parsedTables.size(); ++t) {
+        ParsedTable parsed = parsedTables.at(t);
+        if (previous && t < previous->size())
+            stickAllocatedInners(&parsed, previous->at(t), ctx);
         const QVector<qreal> columnXs = columnXsFor(parsed, ctx);
         const QRectF firstRow = layout->blockBoundingRect(parsed.dataRows.first());
         qreal y = firstRow.top();
@@ -374,14 +405,6 @@ QVector<TableGeometry::Table> buildGeometries(QTextDocument *document, qreal wra
         tables.append(fillTable(parsed, columnXs, rowEdges, rowHeights, ctx));
     }
     return tables;
-}
-
-qreal storedInner(const TableGeometry::Table &geom, int column) {
-    for (const TableGeometry::Cell &cell : geom.cells) {
-        if (cell.column == column)
-            return cell.textRect.width();
-    }
-    return 0;
 }
 
 QString storedCellText(const TableGeometry::Table &geom, int row, int column) {
@@ -470,10 +493,8 @@ bool tryReuseLayout(GeomStore *store, QTextDocument *document, qreal wrapWidth,
                 || parsed.dataRows.size() != old.rowHeights.size())
             return false;
 
-        for (int c = 0; c < parsed.columns; ++c) {
-            if (qAbs(parsed.inners.at(c) - storedInner(old, c)) > 0.5)
-                return false;
-        }
+        ParsedTable laidOut = parsed;
+        const bool grew = stickAllocatedInners(&laidOut, old, ctx);
 
         int dirtyRows = 0;
         int dirtyRow = -1;
@@ -495,10 +516,10 @@ bool tryReuseLayout(GeomStore *store, QTextDocument *document, qreal wrapWidth,
                 return false;
         }
         if (dirtyRow >= 0
-                && qAbs(rowLayoutHeight(parsed, dirtyRow, ctx) - old.rowHeights.at(dirtyRow)) > 0.5)
+                && qAbs(rowLayoutHeight(laidOut, dirtyRow, ctx) - old.rowHeights.at(dirtyRow)) > 0.5)
             return false;
 
-        const QVector<qreal> columnXs = old.box.columns;
+        const QVector<qreal> columnXs = grew ? columnXsFor(laidOut, ctx) : old.box.columns;
         QVector<qreal> rowEdges = old.box.rowEdges;
         const QRectF firstRow = layout->blockBoundingRect(parsed.dataRows.first());
         const qreal dy = firstRow.top() - rowEdges.first();
@@ -507,7 +528,9 @@ bool tryReuseLayout(GeomStore *store, QTextDocument *document, qreal wrapWidth,
             for (qreal &edge : rowEdges)
                 edge += dy;
         }
-        next.append(fillTable(parsed, columnXs, rowEdges, old.rowHeights, ctx));
+        next.append(fillTable(laidOut, columnXs, rowEdges, old.rowHeights, ctx));
+        if (grew)
+            moved = true;
     }
 
     store->tables = next;
@@ -663,7 +686,8 @@ QVector<TableGeometry::Table> TableGeometry::geometriesFor(QTextDocument *docume
             && tryReuseLayout(store, document, wrapWidth, layoutCursor))
         return store->tables;
 
-    QVector<Table> tables = buildGeometries(document, wrapWidth, layoutCursor);
+    QVector<Table> tables = buildGeometries(document, wrapWidth, layoutCursor,
+        (store && !store->tables.isEmpty()) ? &store->tables : nullptr);
     if (!store)
         return tables;
     storeBuilt(store, document, wrapWidth, layoutCursor, tables);

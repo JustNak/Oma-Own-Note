@@ -416,7 +416,8 @@ int TableChrome::hitTest(qreal x, qreal y) const {
     int hitRow = -1;
     for (const TableGeometry::Table &table : m_tables) {
         const QRectF bounds = table.box.bounds;
-        if (y < bounds.top() || y > bounds.bottom())
+        if (x < bounds.left() - 1 || x > bounds.right() + 1
+                || y < bounds.top() || y > bounds.bottom())
             continue;
         hitTable = &table;
         for (int i = 0; i + 1 < table.box.rowEdges.size(); ++i) {
