@@ -241,6 +241,15 @@ private slots:
         QCOMPARE(wrapped.size(), 1);
         QCOMPARE(wrapped.at(0).content.start, 2);
         QCOMPARE(wrapped.at(0).content.length, 4);
+
+        const auto under = MarkdownHighlighter::inlineMarkup(QStringLiteral("_word_ and __bold__"));
+        QCOMPARE(under.size(), 2);
+        QCOMPARE(under.at(0).kind, MarkdownHighlighter::InlineKind::Italic);
+        QCOMPARE(under.at(0).content.start, 1);
+        QCOMPARE(under.at(0).content.length, 4);
+        QCOMPARE(under.at(1).kind, MarkdownHighlighter::InlineKind::Bold);
+        QCOMPARE(under.at(1).content.length, 4);
+        QVERIFY(markupHasKind(QStringLiteral("2*3*4"), MarkdownHighlighter::InlineKind::Italic));
     }
 
     void returnContinuesTaskItems() {
@@ -280,6 +289,8 @@ private slots:
                  QStringLiteral("* [ ] a\n* [ ] "));
         QCOMPARE(editor.pressReturn(QStringLiteral("  - [ ] a"), 9),
                  QStringLiteral("  - [ ] a\n  - [ ] "));
+        QCOMPARE(editor.pressReturn(QStringLiteral("1. [ ] a"), 8),
+                 QStringLiteral("1. [ ] a\n2. [ ] "));
     }
 
     void arrowsCrossLiteralUnderscores() {

@@ -894,16 +894,13 @@ ApplicationWindow {
                         replaceSelectionWith("\n");
                         return;
                     }
-                    var match = line.match(/^(\s*)([-+*]|\d+[.)]|>+)\s+(.*)$/);
-                    if (match) {
-                        if (match[3].length === 0) {
+                    var continuation = EditorMutations.listContinuation(line);
+                    if (continuation) {
+                        if (continuation.clear) {
                             EditorMutations.replaceRange(editor, lineStart,
                                                          cursorPosition, "\n");
                         } else {
-                            var marker = match[2];
-                            if (/^\d/.test(marker))
-                                marker = (parseInt(marker) + 1) + marker.slice(-1);
-                            replaceSelectionWith("\n" + match[1] + marker + " ");
+                            replaceSelectionWith(continuation.insert);
                         }
                         return;
                     }

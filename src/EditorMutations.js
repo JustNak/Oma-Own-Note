@@ -140,6 +140,34 @@ function listPrefix(kind, index) {
     return "- ";
 }
 
+function listContinuation(line) {
+    var match = line.match(/^(\s*)([-+*]|\d+[.)]|>+)\s+(.*)$/);
+    if (!match)
+        return null;
+
+    var indent = match[1];
+    var marker = match[2];
+    var rest = match[3];
+    var task = false;
+    if (marker.charAt(0) !== ">") {
+        var taskMatch = rest.match(/^\[([ xX])\]\s*([\s\S]*)$/);
+        if (taskMatch) {
+            task = true;
+            rest = taskMatch[2];
+        }
+    }
+    if (rest.replace(/\s+$/, "").length === 0)
+        return { clear: true, insert: "" };
+
+    var next = marker;
+    if (/^\d/.test(next))
+        next = (parseInt(next, 10) + 1) + next.slice(-1);
+    var insert = "\n" + indent + next + " ";
+    if (task)
+        insert += "[ ] ";
+    return { clear: false, insert: insert };
+}
+
 function quotePrefix() {
     return "> ";
 }
