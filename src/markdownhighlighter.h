@@ -22,7 +22,7 @@ public:
         int length;
     };
 
-    enum class InlineKind { Bold, Italic, Link };
+    enum class InlineKind { Bold, Italic, Link, Code };
 
     struct InlineMarkup {
         InlineKind kind;
@@ -30,9 +30,8 @@ public:
         Span markers[2];
     };
 
-    // Single source of truth for inline markdown spans: the highlighter uses it
-    // to style content and hide markers, and the editor uses it (via
-    // Backend::hiddenRangesAt) to skip the caret over the hidden markers.
+    // Inline spans for one line. Emphasis and link markers are hidden.
+    // Code spans are included so the line can be painted, and their backticks stay visible.
     static QList<InlineMarkup> inlineMarkup(const QString &text);
 
     struct TableLine {

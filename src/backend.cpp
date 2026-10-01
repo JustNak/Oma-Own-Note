@@ -441,6 +441,8 @@ QVariantList Backend::hiddenRangesAt(int position) const {
     const QList<MarkdownHighlighter::InlineMarkup> markup =
         MarkdownHighlighter::inlineMarkup(block.text());
     for (const MarkdownHighlighter::InlineMarkup &item : markup) {
+        if (item.kind == MarkdownHighlighter::InlineKind::Code)
+            continue;
         for (const MarkdownHighlighter::Span &marker : item.markers) {
             spans.append({lineStart + marker.start,
                           lineStart + marker.start + marker.length});
