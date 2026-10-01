@@ -51,6 +51,90 @@ static int spacesAfterWord(const QString &raw, const QString &word)
     return n;
 }
 
+static QTextCharFormat formatOn(const QString &text, int position)
+{
+    QTextDocument document;
+    document.setPlainText(text);
+    MarkdownHighlighter highlighter(&document);
+    highlighter.rehighlight();
+    const QTextBlock block = document.findBlock(position);
+    const int local = position - block.position();
+    QTextCharFormat format;
+    const auto ranges = block.layout()->formats();
+    for (const QTextLayout::FormatRange &range : ranges) {
+        if (local >= range.start && local < range.start + range.length)
+            format = range.format;
+    }
+    return format;
+}
+
+static bool markupHasKind(const QString &text, MarkdownHighlighter::InlineKind kind)
+{
+    const auto markup = MarkdownHighlighter::inlineMarkup(text);
+    for (const auto &item : markup) {
+        if (item.kind == kind)
+            return true;
+    }
+    return false;
+}
+
+static bool markerHidden(const QString &text, int position)
+{
+    const QTextCharFormat format = formatOn(text, position);
+    return format.fontPointSize() == 1.0 && format.fontLetterSpacing() < 0;
+}
+
+class EditorFixture {
+public:
+    EditorFixture()
+    {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        ready = component.isReady();
+        if (!ready) {
+            error = component.errorString();
+            return;
+        }
+        window.reset(component.create());
+        if (!window) {
+            ready = false;
+            error = component.errorString();
+            return;
+        }
+        editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        quick = qobject_cast<QQuickWindow *>(window.data());
+        ready = editor && quick;
+    }
+
+    QString pressReturn(const QString &text, int cursor, Qt::KeyboardModifiers modifiers = Qt::NoModifier)
+    {
+        editor->setProperty("text", text);
+        editor->setProperty("cursorPosition", cursor);
+        QMetaObject::invokeMethod(editor, "forceActiveFocus");
+        QTest::keyClick(quick, Qt::Key_Return, modifiers);
+        return editor->property("text").toString();
+    }
+
+    int pressRight(const QString &text, int times)
+    {
+        editor->setProperty("text", text);
+        editor->setProperty("cursorPosition", 0);
+        QMetaObject::invokeMethod(editor, "forceActiveFocus");
+        for (int i = 0; i < times; ++i)
+            QTest::keyClick(quick, Qt::Key_Right);
+        return editor->property("cursorPosition").toInt();
+    }
+
+    Backend backend;
+    QQmlEngine engine;
+    QScopedPointer<QObject> window;
+    QObject *editor = nullptr;
+    QQuickWindow *quick = nullptr;
+    bool ready = false;
+    QString error;
+};
+
 static void typeIntoWindow(QQuickWindow *window, const QString &text)
 {
     for (const QChar ch : text) {
@@ -106,6 +190,110 @@ private slots:
         QCOMPARE(markup.at(0).content.length, 4);
         QCOMPARE(markup.at(2).content.length, 4);
         QCOMPARE(markup.at(2).markers[0].length, 1);
+    }
+
+    void literalMarksStayVisible() {
+        QVERIFY(!markupHasKind(QStringLiteral("foo_bar_baz"),
+                               MarkdownHighlighter::InlineKind::Italic));
+        QVERIFY(!markupHasKind(QStringLiteral("snake_case"),
+                               MarkdownHighlighter::InlineKind::Italic));
+        QVERIFY(!markupHasKind(QStringLiteral("2 * 3 * 4"),
+                               MarkdownHighlighter::InlineKind::Italic));
+        QVERIFY(!markupHasKind(QStringLiteral("\\*literal\\*"),
+                               MarkdownHighlighter::InlineKind::Italic));
+        QVERIFY(!markupHasKind(QStringLiteral("* * *"),
+                               MarkdownHighlighter::InlineKind::Italic));
+
+        const auto listNote = MarkdownHighlighter::inlineMarkup(QStringLiteral("* item *note*"));
+        QCOMPARE(listNote.size(), 1);
+        QCOMPARE(listNote.at(0).kind, MarkdownHighlighter::InlineKind::Italic);
+        QCOMPARE(listNote.at(0).content.start, 8);
+        QCOMPARE(listNote.at(0).content.length, 4);
+        QCOMPARE(listNote.at(0).markers[0].start, 7);
+
+        const QString coded = QStringLiteral("use `*not*` and `[a](b)`");
+        const int notAt = coded.indexOf(QLatin1Char('n'));
+        QVERIFY(notAt > 0);
+        QVERIFY(!formatOn(coded, notAt).fontItalic());
+        QVERIFY(formatOn(coded, notAt).background().style() != Qt::NoBrush);
+        QVERIFY(!markerHidden(coded, coded.indexOf(QLatin1Char('*'))));
+        const int label = coded.indexOf(QStringLiteral("[a]")) + 1;
+        QVERIFY(!formatOn(coded, label).fontUnderline());
+
+        const QString ticks = QStringLiteral("`` `inner` ``");
+        const int inner = ticks.indexOf(QStringLiteral("inner"));
+        QVERIFY(inner > 0);
+        QVERIFY(formatOn(ticks, inner).background().style() != Qt::NoBrush);
+
+        const QString both = QStringLiteral("***both***");
+        const int letter = both.indexOf(QLatin1Char('b'));
+        QVERIFY(formatOn(both, letter).fontItalic());
+        QVERIFY(formatOn(both, letter).fontWeight() >= QFont::Bold);
+        QVERIFY(markerHidden(both, 0));
+        QVERIFY(!markerHidden(both, letter));
+
+        const QString nested = QStringLiteral("**bold *and* italic**");
+        const int andAt = nested.indexOf(QStringLiteral("and"));
+        QVERIFY(formatOn(nested, andAt).fontItalic());
+        QVERIFY(formatOn(nested, andAt).fontWeight() >= QFont::Bold);
+
+        const auto wrapped = MarkdownHighlighter::inlineMarkup(QStringLiteral("(*note*)"));
+        QCOMPARE(wrapped.size(), 1);
+        QCOMPARE(wrapped.at(0).content.start, 2);
+        QCOMPARE(wrapped.at(0).content.length, 4);
+    }
+
+    void returnContinuesTaskItems() {
+        EditorFixture editor;
+        QVERIFY2(editor.ready, qPrintable(editor.error));
+
+        QCOMPARE(editor.pressReturn(QStringLiteral("plain paragraph"), 15),
+                 QStringLiteral("plain paragraph\n\n"));
+        QCOMPARE(editor.pressReturn(QStringLiteral("plain"), 5, Qt::ShiftModifier),
+                 QStringLiteral("plain\n"));
+        QCOMPARE(editor.pressReturn(QStringLiteral("```\ncode"), 8),
+                 QStringLiteral("```\ncode\n"));
+        QCOMPARE(editor.pressReturn(QStringLiteral("- item"), 6),
+                 QStringLiteral("- item\n- "));
+        QCOMPARE(editor.pressReturn(QStringLiteral("- "), 2),
+                 QStringLiteral("\n"));
+        QCOMPARE(editor.pressReturn(QStringLiteral("* star item"), 11),
+                 QStringLiteral("* star item\n* "));
+        QCOMPARE(editor.pressReturn(QStringLiteral("1. item"), 7),
+                 QStringLiteral("1. item\n2. "));
+        QCOMPARE(editor.pressReturn(QStringLiteral("1. "), 3),
+                 QStringLiteral("\n"));
+        QCOMPARE(editor.pressReturn(QStringLiteral("> quote"), 7),
+                 QStringLiteral("> quote\n> "));
+        QCOMPARE(editor.pressReturn(QStringLiteral("> "), 2),
+                 QStringLiteral("\n"));
+
+        QCOMPARE(editor.pressReturn(QStringLiteral("- [ ] buy milk"), 14),
+                 QStringLiteral("- [ ] buy milk\n- [ ] "));
+        QCOMPARE(editor.pressReturn(QStringLiteral("- [ ] "), 6),
+                 QStringLiteral("\n"));
+        QCOMPARE(editor.pressReturn(QStringLiteral("- [ ]"), 5),
+                 QStringLiteral("\n"));
+        QCOMPARE(editor.pressReturn(QStringLiteral("- [x] done"), 10),
+                 QStringLiteral("- [x] done\n- [ ] "));
+        QCOMPARE(editor.pressReturn(QStringLiteral("* [ ] a"), 7),
+                 QStringLiteral("* [ ] a\n* [ ] "));
+        QCOMPARE(editor.pressReturn(QStringLiteral("  - [ ] a"), 9),
+                 QStringLiteral("  - [ ] a\n  - [ ] "));
+    }
+
+    void arrowsCrossLiteralUnderscores() {
+        EditorFixture editor;
+        QVERIFY2(editor.ready, qPrintable(editor.error));
+        QCOMPARE(editor.pressRight(QStringLiteral("foo_bar_baz"), 3), 3);
+    }
+
+    void arrowsSkipEmphasisMarkers() {
+        EditorFixture editor;
+        QVERIFY2(editor.ready, qPrintable(editor.error));
+        QCOMPARE(editor.pressRight(QStringLiteral("**hi**"), 1), 2);
+        QCOMPARE(editor.pressRight(QStringLiteral("**hi**"), 2), 3);
+        QCOMPARE(editor.pressRight(QStringLiteral("**hi**"), 3), 6);
     }
 
     void loadsCurrentOmarchyTheme() {
