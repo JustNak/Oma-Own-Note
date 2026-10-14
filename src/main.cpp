@@ -71,17 +71,12 @@ int main(int argc, char *argv[]) {
 
     backend.setParentWindow(qobject_cast<QWindow *>(engine.rootObjects().constFirst()));
 
-    bool openPreview = false;
     QString fileArgument;
     const QStringList args = app.arguments();
     for (int index = 1; index < args.size(); ++index) {
-        if (args.at(index) == QStringLiteral("--preview"))
-            openPreview = true;
-        else if (fileArgument.isEmpty())
+        if (fileArgument.isEmpty())
             fileArgument = args.at(index);
     }
-    if (openPreview)
-        engine.rootObjects().constFirst()->setProperty("previewMode", true);
     if (!fileArgument.isEmpty() && !backend.modified())
         backend.open(QUrl::fromLocalFile(fileArgument));
 

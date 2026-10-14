@@ -1,6 +1,6 @@
 # Specimen
 
-A writing sample for the markdown renderer. It keeps the same paper column as the editor and walks through the marks the preview has to carry.
+A writing sample for the editor. It keeps the same paper column and walks through the marks a note can carry.
 
 ## Emphasis
 
@@ -45,6 +45,8 @@ www.example.com
 
 ![Sample swatch](sample.png)
 
+![Remote swatch](https://example.com/swatch.png)
+
 ### Table
 
 | Left | Center | Right |
@@ -78,6 +80,7 @@ E = mc^2
 ```
 
 ```mermaid
+%% note
 graph TD
   A-->B
 ```

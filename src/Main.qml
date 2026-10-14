@@ -19,7 +19,7 @@ ApplicationWindow {
     readonly property color pageColor: backend.themeBackground
     readonly property color textColor: backend.themeForeground
     readonly property color strongTextColor: backend.themeForeground
-    readonly property color mutedColor: darkMode ? "#909191" : "#aeb1b5"
+    readonly property color mutedColor: backend.themeMuted
     readonly property color selectionFill: backend.themeSelection
     // The desktop's text size knob (GNOME's text-scaling-factor, which
     // `omarchy display text size` drives) anchored so its 12px default leaves
@@ -40,10 +40,18 @@ ApplicationWindow {
     property bool replaceOpen: false
     property bool awaitingPendingSave: false
     readonly property bool insertPaletteOpened: insertPalette.opened
-    property bool previewMode: false
-    property var previewBlocks: []
+    property int layoutEpoch: 0
 
-    onPreviewModeChanged: refreshPreview()
+    signal linkActivated(string url)
+
+    function openLinkAt(position) {
+        var url = backend.linkAt(position)
+        if (url === "")
+            return false
+        linkActivated(url)
+        backend.openExternalUrl(url)
+        return true
+    }
 
     Material.theme: darkMode ? Material.Dark : Material.Light
     Material.accent: backend.themeAccent
@@ -107,10 +115,6 @@ ApplicationWindow {
         editorFlick.captureZoomAnchor();
         backend.zoomOut();
         editorFlick.restoreZoomAnchor();
-    }
-
-    function refreshPreview() {
-        previewBlocks = backend.renderMarkdown(editor.text)
     }
 
     function resetZoom() {
@@ -272,12 +276,6 @@ ApplicationWindow {
     }
 
     Shortcut {
-        sequence: "Ctrl+Shift+V"
-        context: Qt.ApplicationShortcut
-        onActivated: previewMode = !previewMode
-    }
-
-    Shortcut {
         sequences: ["Meta+F", "F11"]
         context: Qt.ApplicationShortcut
         onActivated: toggleFullScreen()
@@ -357,16 +355,6 @@ ApplicationWindow {
             externalChangeDialog.deleted = deleted;
             externalChangeDialog.locallyModified = locallyModified;
             externalChangeDialog.open();
-        }
-
-        function onDarkModeChanged() {
-            if (win.previewMode)
-                win.refreshPreview()
-        }
-
-        function onThemeColorsChanged() {
-            if (win.previewMode)
-                win.refreshPreview()
         }
     }
 
@@ -466,7 +454,7 @@ ApplicationWindow {
         standardButtons: Dialog.Close
         anchors.centerIn: parent
         contentItem: Label {
-            text: "Ctrl+S  Save\nCtrl+Shift+S  Save As\nCtrl+O  Open\nCtrl+N  New Window\nCtrl+F  Find\nCtrl+H  Find and Replace\nCtrl+Tab  Insert\nCtrl+B  Bold\nCtrl+I  Italic\nCtrl+K  Link\nCtrl+P  Print\nCtrl+Shift+V  Preview\nCtrl+=  Zoom In\nCtrl+-  Zoom Out\nCtrl+0  Reset Zoom\nF11 / Super+F  Fullscreen\nCtrl+?  Shortcuts"
+            text: "Ctrl+S  Save\nCtrl+Shift+S  Save As\nCtrl+O  Open\nCtrl+N  New Window\nCtrl+F  Find\nCtrl+H  Find and Replace\nCtrl+Tab  Insert\nCtrl+B  Bold\nCtrl+I  Italic\nCtrl+K  Link\nCtrl+P  Print\nCtrl+click  Open link\nCtrl+=  Zoom In\nCtrl+-  Zoom Out\nCtrl+0  Reset Zoom\nF11 / Super+F  Fullscreen\nCtrl+?  Shortcuts"
             lineHeight: 1.5
         }
     }
@@ -694,23 +682,39 @@ ApplicationWindow {
                 width: editor.width
                 height: Math.max(
                     (editorFlick.height - y - 96) / Math.max(scale, 0.01),
-                    (win.previewMode ? markdownPreview.implicitHeight : editor.implicitHeight) + 20)
+                    editor.implicitHeight + 20)
                 scale: win.zoomFactor
                 transformOrigin: Item.TopLeft
                 clip: false
                 x: Math.round((editorFlick.width - win.editorWidth) / 2)
                 y: Math.max(42, Math.round(win.height * 0.05))
 
+            EditorChrome {
+                id: editorUnderlay
+                anchors.fill: editor
+                z: 0
+                underlay: true
+                editorItem: editor
+                decorations: backend.decorations
+                pageColor: win.pageColor
+                textColor: win.textColor
+                mutedColor: win.mutedColor
+                accentColor: backend.themeAccent
+                ruleColor: win.darkMode ? "#4f525a" : win.mutedColor
+                codeFill: win.darkMode ? "#1c1a1a" : "#f8f8f8"
+                layoutEpoch: win.layoutEpoch
+            }
+
             TextEdit {
                 id: editor
                 objectName: "sourceEditor"
+                z: 1
                 x: 0
                 // Inverse of canvas.scale so wrap still fills the 65-character
                 // column after zoom.
                 width: Math.round(win.editorWidth / Math.max(win.zoomFactor, 0.01))
                 height: parent.height
                 text: ""
-                visible: !win.previewMode
                 textFormat: TextEdit.PlainText
                 wrapMode: TextEdit.Wrap
                 clip: false
@@ -738,6 +742,19 @@ ApplicationWindow {
                     color: win.strongTextColor
                 }
                 onCursorRectangleChanged: editorFlick.ensureCursorVisible()
+                onCursorPositionChanged: {
+                    backend.setEditingPosition(cursorPosition)
+                    win.layoutEpoch++
+                }
+                onWidthChanged: win.layoutEpoch++
+
+                TapHandler {
+                    acceptedModifiers: Qt.ControlModifier
+                    onTapped: function(eventPoint) {
+                        var pos = editor.positionAt(eventPoint.position.x, eventPoint.position.y)
+                        win.openLinkAt(pos)
+                    }
+                }
 
                 function replaceSelectionWith(replacement) {
                     var start = Math.min(selectionStart, selectionEnd);
@@ -994,15 +1011,13 @@ ApplicationWindow {
                     var contentChanged = backend.editorTextChanged();
                     if (win.searchOpen && contentChanged)
                         win.updateSearch();
-                    if (win.previewMode)
-                        win.refreshPreview();
                 }
 
                 Text {
                     anchors.left: parent.left
                     anchors.top: parent.top
                     text: "# Start writing"
-                    visible: editor.text.length === 0 && !editor.activeFocus && !win.previewMode
+                    visible: editor.text.length === 0 && !editor.activeFocus
                     color: win.mutedColor
                     font.family: editor.font.family
                     font.pixelSize: editor.font.pixelSize
@@ -1011,26 +1026,23 @@ ApplicationWindow {
 
                 Component.onCompleted: {
                     backend.attachDocument(textDocument);
+                    backend.setEditingPosition(cursorPosition);
                     forceActiveFocus();
                 }
-            }
 
-            MarkdownPreview {
-                id: markdownPreview
-                objectName: "markdownPreview"
-                visible: win.previewMode
-                width: editor.width
-                blocks: win.previewBlocks
-                textColor: win.textColor
-                mutedColor: win.mutedColor
-                accentColor: backend.themeAccent
-                pageColor: win.pageColor
-                baseSize: win.editorFontPixelSize
-                fontFamily: editor.font.family
-                onAnchorRequested: function(item) {
-                    var y = item.mapToItem(canvas, 0, 0).y
-                    editorFlick.scrollTo(editorFlick.clampContentY(
-                        editorFlick.toContentY(y) - win.editorFontPixelSize))
+                EditorChrome {
+                    id: editorChrome
+                    anchors.fill: parent
+                    z: 2
+                    editorItem: editor
+                    decorations: backend.decorations
+                    pageColor: win.pageColor
+                    textColor: win.textColor
+                    mutedColor: win.mutedColor
+                    accentColor: backend.themeAccent
+                    ruleColor: win.darkMode ? "#4f525a" : win.mutedColor
+                    codeFill: win.darkMode ? "#1c1a1a" : "#f8f8f8"
+                    layoutEpoch: win.layoutEpoch
                 }
             }
             }
@@ -1080,19 +1092,6 @@ ApplicationWindow {
             anchors.rightMargin: 12
             anchors.bottomMargin: 10
             spacing: 12
-
-            Label {
-                objectName: "previewToggle"
-                text: win.previewMode ? "Edit" : "Preview"
-                color: win.mutedColor
-                opacity: previewHover.hovered ? 1 : 0.75
-                font.family: "iA Writer Mono S"
-                font.pixelSize: win.scaledSize(11)
-
-                HoverHandler { id: previewHover }
-
-                TapHandler { onTapped: win.previewMode = !win.previewMode }
-            }
 
             Label {
                 objectName: "zoomPercentLabel"

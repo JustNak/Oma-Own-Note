@@ -1,8 +1,16 @@
 #include <QApplication>
 #include <QtTest>
 
-#include "markdownrendertest.h"
+#include <cmath>
+
 #include <QColor>
+#include <QDir>
+#include <QFile>
+#include <QFontDatabase>
+#include <QQuickTextDocument>
+#include <QSignalSpy>
+#include <QTemporaryDir>
+#include <QTextDocument>
 #include <QFont>
 #include <QFontMetricsF>
 #include <QImage>
@@ -859,8 +867,430 @@ private slots:
         QCOMPARE(QFileInfo(fallbackUrl.toLocalFile()).absolutePath(), QDir::homePath());
     }
 
+    void lightMutedMeetsContrast() {
+        const QColor muted(MarkdownHighlighter::mutedColor(false));
+        const auto linear = [](qreal channel) {
+            return channel <= 0.03928 ? channel / 12.92
+                                      : std::pow((channel + 0.055) / 1.055, 2.4);
+        };
+        const qreal luminance = 0.2126 * linear(muted.redF())
+            + 0.7152 * linear(muted.greenF())
+            + 0.0722 * linear(muted.blueF());
+        const qreal contrast = 1.05 / (luminance + 0.05);
+        QVERIFY2(contrast >= 4.5,
+                 qPrintable(QStringLiteral("%1 contrast %2").arg(muted.name()).arg(contrast)));
+    }
+
+    void editorRoundTripLeavesSourceUntouched() {
+        Backend backend;
+        QQmlEngine engine;
+        QObject *editor = nullptr;
+        QScopedPointer<QObject> window(openEditor(backend, engine, &editor));
+        QVERIFY(editor);
+
+        const QString path = QFINDTESTDATA("../docs/markdown-test.md");
+        QVERIFY(!path.isEmpty());
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QString original = QString::fromUtf8(file.readAll());
+        backend.open(QUrl::fromLocalFile(path));
+        QTRY_COMPARE(editor->property("text").toString(), original);
+
+        const QList<int> stops{0, 40, 180, int(original.size() / 2), int(original.size())};
+        for (int stop : stops) {
+            editor->setProperty("cursorPosition", qBound(0, stop, original.size()));
+            QCoreApplication::processEvents();
+            QCOMPARE(editor->property("text").toString(), original);
+        }
+    }
+
+    void rendersTableUntilTheCaretEntersIt() {
+        Backend backend;
+        QQmlEngine engine;
+        QObject *editor = nullptr;
+        QScopedPointer<QObject> window(openEditor(backend, engine, &editor));
+        QVERIFY(editor);
+
+        const QString text = QStringLiteral(
+            "note\n"
+            "\n"
+            "| Left | Center | Right |\n"
+            "| :--- | :----: | ----: |\n"
+            "| alder | ash | elm |\n");
+        editor->setProperty("text", text);
+        editor->setProperty("cursorPosition", 0);
+        QCoreApplication::processEvents();
+
+        QTextDocument *document = editorDocument(editor);
+        QVERIFY(document);
+        const auto span = [document](const QString &line, const QString &word) {
+            const int lineStart = document->toPlainText().indexOf(line);
+            const QTextBlock block = document->findBlock(lineStart);
+            const int local = line.indexOf(word);
+            const QTextLine textLine = block.layout()->lineAt(0);
+            return qMakePair(textLine.cursorToX(local), textLine.cursorToX(local + word.size()));
+        };
+        const auto headerLine = QStringLiteral("| Left | Center | Right |");
+        const auto bodyLine = QStringLiteral("| alder | ash | elm |");
+        const auto leftHeader = span(headerLine, QStringLiteral("Left"));
+        const auto leftBody = span(bodyLine, QStringLiteral("alder"));
+        QVERIFY2(qAbs(leftHeader.first - leftBody.first) < 2.0,
+                 qPrintable(QStringLiteral("left %1 vs %2").arg(leftHeader.first).arg(leftBody.first)));
+
+        const auto centerHeader = span(headerLine, QStringLiteral("Center"));
+        const auto centerBody = span(bodyLine, QStringLiteral("ash"));
+        const qreal headerMid = (centerHeader.first + centerHeader.second) / 2.0;
+        const qreal bodyMid = (centerBody.first + centerBody.second) / 2.0;
+        QVERIFY2(qAbs(headerMid - bodyMid) < 2.0,
+                 qPrintable(QStringLiteral("center %1 vs %2").arg(headerMid).arg(bodyMid)));
+
+        const auto rightHeader = span(headerLine, QStringLiteral("Right"));
+        const auto rightBody = span(bodyLine, QStringLiteral("elm"));
+        QVERIFY2(qAbs(rightHeader.second - rightBody.second) < 2.0,
+                 qPrintable(QStringLiteral("right %1 vs %2")
+                                .arg(rightHeader.second).arg(rightBody.second)));
+        const QTextBlock body = document->findBlock(document->toPlainText().indexOf(bodyLine));
+        const qreal em = body.layout()->lineAt(0).cursorToX(body.text().indexOf(QLatin1Char('a')) + 1)
+            - body.layout()->lineAt(0).cursorToX(body.text().indexOf(QLatin1Char('a')));
+
+        QTRY_VERIFY(findNamedItem(window.data(), QStringLiteral("tableFrame")));
+
+        const int alder = text.indexOf(QStringLiteral("alder"));
+        editor->setProperty("cursorPosition", alder);
+        QCoreApplication::processEvents();
+        QTRY_VERIFY(findNamedItem(window.data(), QStringLiteral("tableFrame")) == nullptr);
+
+        const QTextBlock raw = document->findBlock(document->toPlainText().indexOf(
+            QStringLiteral("| Left | Center | Right |")));
+        const qreal pipe = raw.layout()->lineAt(0).cursorToX(1) - raw.layout()->lineAt(0).cursorToX(0);
+        QVERIFY2(pipe > em * 0.6, qPrintable(QStringLiteral("raw pipe %1 em %2").arg(pipe).arg(em)));
+        QCOMPARE(editor->property("text").toString(), text);
+    }
+
+    void clickingATaskTogglesOnlyTheBoxAndUndoes() {
+        Backend backend;
+        QQmlEngine engine;
+        QObject *editor = nullptr;
+        QScopedPointer<QObject> window(openEditor(backend, engine, &editor));
+        QVERIFY(editor);
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
+        QVERIFY(quickWindow);
+        quickWindow->show();
+        QVERIFY(QTest::qWaitForWindowExposed(quickWindow));
+
+        const QString original = QStringLiteral("keep\n- [ ] alpha\n| stay | put |\n");
+        editor->setProperty("text", original);
+        editor->setProperty("cursorPosition", 0);
+        QCoreApplication::processEvents();
+        QQuickItem *box = nullptr;
+        QTRY_VERIFY((box = findNamedItem(window.data(), QStringLiteral("taskCheckbox"))));
+        auto *item = qobject_cast<QQuickItem *>(box);
+        QVERIFY(item);
+        QVERIFY(QMetaObject::invokeMethod(box, "forceActiveFocus"));
+        const QPoint center = item->mapToScene(QPointF(item->width() / 2.0, item->height() / 2.0)).toPoint();
+        QTest::mouseClick(quickWindow, Qt::LeftButton, Qt::NoModifier, center);
+        QTRY_COMPARE(editor->property("text").toString(),
+                     QStringLiteral("keep\n- [x] alpha\n| stay | put |\n"));
+
+        QVERIFY(QMetaObject::invokeMethod(editor, "undo"));
+        QTRY_COMPARE(editor->property("text").toString(), original);
+    }
+
+    void ctrlClickOpensOnlyWebAndMailLinks() {
+        Backend backend;
+        QQmlEngine engine;
+        QObject *editor = nullptr;
+        QScopedPointer<QObject> window(openEditor(backend, engine, &editor));
+        QVERIFY(editor);
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window.data());
+        QVERIFY(quickWindow);
+        quickWindow->show();
+        QVERIFY(QTest::qWaitForWindowExposed(quickWindow));
+
+        const QString text = QStringLiteral(
+            "See [safe](https://example.com/a) and [bad](javascript:alert(1)) "
+            "and [mail](mailto:writer@example.com) and [disk](file:///etc/passwd)\n");
+        editor->setProperty("text", text);
+        editor->setProperty("cursorPosition", 0);
+        QCoreApplication::processEvents();
+
+        const auto at = [&text](const QString &label) {
+            return text.indexOf(label);
+        };
+        QCOMPARE(backend.linkAt(at(QStringLiteral("safe"))),
+                 QStringLiteral("https://example.com/a"));
+        QCOMPARE(backend.linkAt(at(QStringLiteral("mail"))),
+                 QStringLiteral("mailto:writer@example.com"));
+        QVERIFY(backend.linkAt(at(QStringLiteral("bad"))).isEmpty());
+        QVERIFY(backend.linkAt(at(QStringLiteral("disk"))).isEmpty());
+
+        QSignalSpy activated(window.data(), SIGNAL(linkActivated(QString)));
+        const auto click = [&](const QString &label) {
+            const int position = at(label);
+            QRectF rect;
+            const bool invoked = QMetaObject::invokeMethod(editor, "positionToRectangle",
+                                                          Q_RETURN_ARG(QRectF, rect),
+                                                          Q_ARG(int, position));
+            QVERIFY(invoked);
+            auto *editorItem = qobject_cast<QQuickItem *>(editor);
+            const QPoint scene = editorItem->mapToScene(rect.center()).toPoint();
+            QTest::mouseClick(quickWindow, Qt::LeftButton, Qt::ControlModifier, scene);
+        };
+        click(QStringLiteral("safe"));
+        QTRY_COMPARE(activated.count(), 1);
+        QCOMPARE(activated.takeFirst().constFirst().toString(),
+                 QStringLiteral("https://example.com/a"));
+        click(QStringLiteral("bad"));
+        click(QStringLiteral("disk"));
+        QCOMPARE(activated.count(), 0);
+        click(QStringLiteral("mail"));
+        QTRY_COMPARE(activated.count(), 1);
+        QCOMPARE(editor->property("text").toString(), text);
+    }
+
+    void editorShowsCodeQuotesRulesAndHtmlSource() {
+        Backend backend;
+        QQmlEngine engine;
+        QObject *editor = nullptr;
+        QScopedPointer<QObject> window(openEditor(backend, engine, &editor));
+        QVERIFY(editor);
+
+        const QString text = QStringLiteral(
+            "intro\n"
+            "\n"
+            "> quoted line\n"
+            "\n"
+            "---\n"
+            "\n"
+            "```java\n"
+            "public class A {}\n"
+            "```\n"
+            "\n"
+            "```go\n"
+            "package main\n"
+            "```\n"
+            "\n"
+            "```rust\n"
+            "fn main() {}\n"
+            "```\n"
+            "\n"
+            "```mermaid\n"
+            "%% note\n"
+            "```\n"
+            "\n"
+            "<em>Emphasized</em>\n");
+        editor->setProperty("text", text);
+        editor->setProperty("cursorPosition", 0);
+        QCoreApplication::processEvents();
+
+        QTextDocument *document = editorDocument(editor);
+        QVERIFY(document);
+        const auto formatAt = [document](int position) {
+            const QTextBlock block = document->findBlock(position);
+            const int local = position - block.position();
+            QTextCharFormat format;
+            const auto ranges = block.layout()->formats();
+            for (const QTextLayout::FormatRange &range : ranges) {
+                if (local >= range.start && local < range.start + range.length)
+                    format = range.format;
+            }
+            return format;
+        };
+        const QString plain = document->toPlainText();
+        const int quoteMarker = plain.indexOf(QLatin1Char('>'));
+        QVERIFY(quoteMarker >= 0);
+        QCOMPARE(formatAt(quoteMarker).fontPointSize(), 1.0);
+        editor->setProperty("cursorPosition", quoteMarker);
+        QCoreApplication::processEvents();
+        QVERIFY(qFuzzyIsNull(formatAt(quoteMarker).fontPointSize())
+                || formatAt(quoteMarker).fontPointSize() > 8);
+
+        editor->setProperty("cursorPosition", 0);
+        QCoreApplication::processEvents();
+        QTRY_VERIFY(findNamedItem(window.data(), QStringLiteral("horizontalRule")));
+        const int rule = plain.indexOf(QStringLiteral("---"));
+        editor->setProperty("cursorPosition", rule);
+        QCoreApplication::processEvents();
+        QTRY_VERIFY(findNamedItem(window.data(), QStringLiteral("horizontalRule")) == nullptr);
+
+        const QColor accent(backend.themeAccent());
+        const int keyword = plain.indexOf(QStringLiteral("public"));
+        QCOMPARE(formatAt(keyword).foreground().color(), accent);
+        QVERIFY(formatAt(keyword).background().style() != Qt::NoBrush);
+        QVERIFY(document->findBlock(keyword).blockFormat().background().style() != Qt::NoBrush);
+
+        const int goKeyword = plain.indexOf(QStringLiteral("package"));
+        QCOMPARE(formatAt(goKeyword).foreground().color(), accent);
+        const int rustKeyword = plain.indexOf(QStringLiteral("fn"));
+        QCOMPARE(formatAt(rustKeyword).foreground().color(), accent);
+        const int comment = plain.indexOf(QStringLiteral("%%"));
+        QCOMPARE(formatAt(comment).foreground().color(),
+                 QColor(MarkdownHighlighter::mutedColor(backend.darkMode())));
+
+        const int html = plain.indexOf(QStringLiteral("<em>"));
+        QVERIFY(html >= 0);
+        QCOMPARE(document->characterAt(html), QLatin1Char('<'));
+        QCOMPARE(int(formatAt(html).objectType()), int(QTextFormat::NoObject));
+        QVERIFY(qFuzzyIsNull(formatAt(html).fontPointSize()) || formatAt(html).fontPointSize() > 8);
+        QVERIFY(plain.contains(QStringLiteral("<em>Emphasized</em>")));
+        QCOMPARE(editor->property("text").toString(), text);
+    }
+
+    void imageLoadsStayInsideTheNote() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString notePath = directory.filePath(QStringLiteral("note.md"));
+        QFile sampleSource(QFINDTESTDATA("../docs/sample.png"));
+        QVERIFY(sampleSource.open(QIODevice::ReadOnly));
+        const QByteArray sampleBytes = sampleSource.readAll();
+        QFile sample(directory.filePath(QStringLiteral("sample.png")));
+        QVERIFY(sample.open(QIODevice::WriteOnly));
+        QCOMPARE(sample.write(sampleBytes), qint64(sampleBytes.size()));
+        sample.close();
+        const QString text = QStringLiteral(
+            "title\n"
+            "\n"
+            "![local](sample.png)\n"
+            "![remote](https://example.com/a.png)\n"
+            "![proto](//cdn.example/a.png)\n"
+            "![escape](../secret.png)\n"
+            "![abs](/etc/passwd)\n"
+            "![fileout](file:///etc/passwd)\n"
+            "![filehost](file://evil.example/share.png)\n"
+            "![encoded](..%2Fsecret.png)\n");
+        QFile note(notePath);
+        QVERIFY(note.open(QIODevice::WriteOnly | QIODevice::Text));
+        note.write(text.toUtf8());
+        note.close();
+
+        Backend backend;
+        QQmlEngine engine;
+        QObject *editor = nullptr;
+        QScopedPointer<QObject> window(openEditor(backend, engine, &editor));
+        QVERIFY(editor);
+        backend.open(QUrl::fromLocalFile(notePath));
+        editor->setProperty("cursorPosition", 0);
+        QCoreApplication::processEvents();
+
+        const auto image = [&backend, &text](const QString &alt) {
+            const int position = text.indexOf(QStringLiteral("![") + alt);
+            return backend.imageAt(position);
+        };
+        const QVariantMap local = image(QStringLiteral("local"));
+        QCOMPARE(local.value(QStringLiteral("mode")).toString(), QStringLiteral("local"));
+        const QString localPath = QUrl(local.value(QStringLiteral("source")).toString()).toLocalFile();
+        QVERIFY(localPath.startsWith(QFileInfo(directory.path()).canonicalFilePath() + QLatin1Char('/')));
+        QVERIFY(localPath.endsWith(QStringLiteral("/sample.png")));
+
+        QCOMPARE(image(QStringLiteral("remote")).value(QStringLiteral("mode")).toString(),
+                 QStringLiteral("remote"));
+        QVERIFY(image(QStringLiteral("remote")).value(QStringLiteral("source")).toString().isEmpty());
+        QCOMPARE(image(QStringLiteral("proto")).value(QStringLiteral("mode")).toString(),
+                 QStringLiteral("remote"));
+        QVERIFY(image(QStringLiteral("proto")).value(QStringLiteral("source")).toString().isEmpty());
+        QCOMPARE(image(QStringLiteral("escape")).value(QStringLiteral("mode")).toString(),
+                 QStringLiteral("rejected"));
+        QCOMPARE(image(QStringLiteral("abs")).value(QStringLiteral("mode")).toString(),
+                 QStringLiteral("rejected"));
+        QCOMPARE(image(QStringLiteral("fileout")).value(QStringLiteral("mode")).toString(),
+                 QStringLiteral("rejected"));
+        QCOMPARE(image(QStringLiteral("filehost")).value(QStringLiteral("mode")).toString(),
+                 QStringLiteral("rejected"));
+        QCOMPARE(image(QStringLiteral("filehost")).value(QStringLiteral("reason")).toString(),
+                 QStringLiteral("file-host"));
+        QCOMPARE(image(QStringLiteral("encoded")).value(QStringLiteral("mode")).toString(),
+                 QStringLiteral("rejected"));
+
+        const QList<QQuickItem *> images = findNamedItems(window.data(), QStringLiteral("renderedImage"));
+        QVERIFY(!images.isEmpty());
+        bool sawLocal = false;
+        for (QObject *imageObject : images) {
+            const QString source = imageObject->property("source").toString();
+            QVERIFY(!source.startsWith(QStringLiteral("http://")));
+            QVERIFY(!source.startsWith(QStringLiteral("https://")));
+            QVERIFY(!source.startsWith(QStringLiteral("//")));
+            if (source.startsWith(QStringLiteral("file:")))
+                sawLocal = true;
+        }
+        QVERIFY(sawLocal);
+
+        QQuickItem *remoteButton = nullptr;
+        QTRY_VERIFY((remoteButton = findNamedItem(window.data(), QStringLiteral("remoteImageButton"))));
+        QVERIFY(remoteButton->property("activeFocusOnTab").toBool());
+        QObject *editorChrome = window->findChild<QObject *>(QStringLiteral("editorChrome"));
+        QVERIFY(editorChrome);
+        QVERIFY(QMetaObject::invokeMethod(editorChrome, "consentRemote",
+                                          Q_ARG(QVariant, QStringLiteral("https://example.com/a.png"))));
+        QCoreApplication::processEvents();
+        bool optedIn = false;
+        for (QQuickItem *imageObject : findNamedItems(window.data(), QStringLiteral("renderedImage"))) {
+            if (imageObject->property("source").toString() == QStringLiteral("https://example.com/a.png"))
+                optedIn = true;
+        }
+        QVERIFY(optedIn);
+        QCOMPARE(editor->property("text").toString(), text);
+    }
+
 private:
     QTemporaryDir m_settingsDirectory;
+
+    QObject *openEditor(Backend &backend, QQmlEngine &engine, QObject **editor) {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        auto *component = new QQmlComponent(&engine, QUrl::fromLocalFile(mainQmlPath), &engine);
+        QObject::connect(&engine, &QQmlEngine::warnings, &engine,
+                         [](const QList<QQmlError> &warnings) {
+            for (const QQmlError &warning : warnings)
+                qWarning().noquote() << warning.toString();
+        });
+        QObject *window = component->create();
+        if (!component->isReady() || !window) {
+            qWarning() << component->errorString();
+            return nullptr;
+        }
+        *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        return window;
+    }
+
+    QTextDocument *editorDocument(QObject *editor) const {
+        auto *quickDocument = editor->property("textDocument").value<QQuickTextDocument *>();
+        return quickDocument ? quickDocument->textDocument() : nullptr;
+    }
+
+    QQuickItem *findNamedItem(QQuickItem *root, const QString &name) const {
+        if (!root)
+            return nullptr;
+        if (root->objectName() == name)
+            return root;
+        const auto children = root->childItems();
+        for (QQuickItem *child : children) {
+            if (QQuickItem *found = findNamedItem(child, name))
+                return found;
+        }
+        return nullptr;
+    }
+
+    QQuickItem *findNamedItem(QObject *window, const QString &name) const {
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window);
+        return quickWindow ? findNamedItem(quickWindow->contentItem(), name) : nullptr;
+    }
+
+    QList<QQuickItem *> findNamedItems(QQuickItem *root, const QString &name) const {
+        QList<QQuickItem *> found;
+        if (!root)
+            return found;
+        if (root->objectName() == name)
+            found.append(root);
+        const auto children = root->childItems();
+        for (QQuickItem *child : children)
+            found += findNamedItems(child, name);
+        return found;
+    }
+
+    QList<QQuickItem *> findNamedItems(QObject *window, const QString &name) const {
+        auto *quickWindow = qobject_cast<QQuickWindow *>(window);
+        return quickWindow ? findNamedItems(quickWindow->contentItem(), name) : QList<QQuickItem *>{};
+    }
 };
 
 int main(int argc, char **argv) {
@@ -868,10 +1298,6 @@ int main(int argc, char **argv) {
     int status = 0;
     {
         OmaOwnNoteTest test;
-        status |= QTest::qExec(&test, argc, argv);
-    }
-    {
-        MarkdownRenderTest test;
         status |= QTest::qExec(&test, argc, argv);
     }
     return status;

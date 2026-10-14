@@ -12,7 +12,7 @@ Popup {
     property real textScale: 1
     property color textColor: darkMode ? "#d0d0d0" : "#42464c"
     property color strongTextColor: darkMode ? "#eeeeee" : "#222324"
-    property color mutedColor: darkMode ? "#909191" : "#aeb1b5"
+    property color mutedColor: darkMode ? "#909191" : "#767676"
     property color selectionFill: "#3d5a73"
     property color accentColor: "#5584aa"
     property int containerWidth: 720
