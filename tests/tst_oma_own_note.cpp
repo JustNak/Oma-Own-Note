@@ -2108,6 +2108,320 @@ private slots:
         QCOMPARE(editor->property("text").toString(), text + QStringLiteral("x"));
     }
 
+    void nestedListItemsStayOutOfCode() {
+        Backend backend;
+        QQmlEngine engine;
+        QObject *editor = nullptr;
+        QScopedPointer<QObject> window(openEditor(backend, engine, &editor));
+        QVERIFY(editor);
+
+        const QString text = QStringLiteral(
+            "note\n"
+            "\n"
+            "- [ ] parent\n"
+            "    words stay in the item\n"
+            "    - [ ] tight\n"
+            "\n"
+            "- [ ] blank parent\n"
+            "\n"
+            "    - [ ] blank child\n"
+            "\n"
+            "1. [ ] ordered\n"
+            "   1. [ ] ordered child\n"
+            "2. [ ] ordered sibling\n"
+            "\n"
+            "- level\n"
+            "    - level\n"
+            "        - [ ] deep\n"
+            "\n"
+            "- fence parent\n"
+            "\n"
+            "    ```\n"
+            "    - [ ] hidden\n"
+            "    | a | b |\n"
+            "    | --- | --- |\n"
+            "    ---\n"
+            "    ```\n"
+            "\n"
+            "    continuation stays a paragraph\n"
+            "\n"
+            "- done\n"
+            "\n"
+            "paragraph\n"
+            "\n"
+            "    indented code\n"
+            "    - [ ] not a task\n"
+            "\n"
+            "- [ ] live\n");
+        editor->setProperty("text", text);
+        editor->setProperty("cursorPosition", 0);
+        QCoreApplication::processEvents();
+
+        const QStringList live = {
+            QStringLiteral("[ ] parent"),
+            QStringLiteral("[ ] tight"),
+            QStringLiteral("[ ] blank parent"),
+            QStringLiteral("[ ] blank child"),
+            QStringLiteral("[ ] ordered"),
+            QStringLiteral("[ ] ordered child"),
+            QStringLiteral("[ ] ordered sibling"),
+            QStringLiteral("[ ] deep"),
+            QStringLiteral("[ ] live"),
+        };
+        for (const QString &label : live) {
+            const int box = text.indexOf(label);
+            QVERIFY2(box >= 0, qPrintable(label));
+            QVERIFY2(!backend.taskAt(box).isEmpty(), qPrintable(label));
+        }
+        const int hidden = text.indexOf(QStringLiteral("[ ] hidden"));
+        const int codedTask = text.indexOf(QStringLiteral("[ ] not a task"));
+        QVERIFY(backend.taskAt(hidden).isEmpty());
+        QVERIFY(backend.taskAt(codedTask).isEmpty());
+        QVERIFY(!backend.toggleTask(hidden));
+        QVERIFY(!backend.toggleTask(codedTask));
+        QCOMPARE(editor->property("text").toString(), text);
+
+        int tasks = 0;
+        for (const QVariant &entry : backend.decorations()) {
+            const QVariantMap map = entry.toMap();
+            const QString kind = map.value(QStringLiteral("kind")).toString();
+            QVERIFY(kind != QStringLiteral("table"));
+            QVERIFY(kind != QStringLiteral("rule"));
+            if (kind == QStringLiteral("task"))
+                ++tasks;
+        }
+        QCOMPARE(tasks, live.size());
+        QVERIFY(findNamedItem(window.data(), QStringLiteral("tableFrame")) == nullptr);
+        QVERIFY(findNamedItem(window.data(), QStringLiteral("horizontalRule")) == nullptr);
+
+        QTextDocument *document = editorDocument(editor);
+        QVERIFY(document);
+        const auto blockOf = [&](const QString &label) {
+            return document->findBlock(text.indexOf(label));
+        };
+        QCOMPARE(blockOf(QStringLiteral("words stay")).blockFormat().leftMargin(), qreal(0));
+        QCOMPARE(blockOf(QStringLiteral("continuation stays")).blockFormat().leftMargin(), qreal(0));
+        const QTextBlock fence = blockOf(QStringLiteral("    ```\n"));
+        QCOMPARE(fence.blockFormat().leftMargin(), qreal(0));
+        QCOMPARE(fence.blockFormat().topMargin(), MarkdownHighlighter::codeBlockInset);
+        QCOMPARE(blockOf(QStringLiteral("hidden")).blockFormat().leftMargin(),
+                 MarkdownHighlighter::codeBlockInset);
+        QCOMPARE(blockOf(QStringLiteral("indented code")).blockFormat().leftMargin(),
+                 MarkdownHighlighter::codeBlockInset);
+        QCOMPARE(blockOf(QStringLiteral("not a task")).blockFormat().leftMargin(),
+                 MarkdownHighlighter::codeBlockInset);
+
+        const int tight = text.indexOf(QStringLiteral("[ ] tight"));
+        QVERIFY(backend.toggleTask(tight));
+        QCoreApplication::processEvents();
+        QVERIFY(editor->property("text").toString().contains(QStringLiteral("- [x] tight")));
+        QVERIFY(editor->property("text").toString().contains(QStringLiteral("- [ ] parent")));
+        QVERIFY(QMetaObject::invokeMethod(editor, "undo"));
+        QCoreApplication::processEvents();
+        QCOMPARE(editor->property("text").toString(), text);
+    }
+
+    void inlineImageParagraphStillWraps() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        QImage icon(40, 40, QImage::Format_ARGB32);
+        icon.fill(QColor(QStringLiteral("#336699")));
+        QVERIFY(icon.save(directory.filePath(QStringLiteral("icon.png"))));
+        QString sentence = QStringLiteral("A long paragraph keeps wrapping around an inline badge ");
+        while (sentence.size() < 220)
+            sentence += QStringLiteral("so the line breaks ");
+        sentence += QStringLiteral("![icon](icon.png) ");
+        while (sentence.size() < 460)
+            sentence += QStringLiteral("and the rest stays beside the words ");
+        const QString text = QStringLiteral("note\n\n") + sentence + QStringLiteral("\nafter\n");
+        QFile note(directory.filePath(QStringLiteral("note.md")));
+        QVERIFY(note.open(QIODevice::WriteOnly | QIODevice::Text));
+        note.write(text.toUtf8());
+        note.close();
+
+        Backend backend;
+        QQmlEngine engine;
+        QObject *editor = nullptr;
+        QScopedPointer<QObject> window(openEditor(backend, engine, &editor));
+        QVERIFY(editor);
+        backend.open(QUrl::fromLocalFile(note.fileName()));
+        editor->setProperty("cursorPosition", text.lastIndexOf(QStringLiteral("after")));
+        QCoreApplication::processEvents();
+
+        QTextDocument *document = editorDocument(editor);
+        QVERIFY(document);
+        const int iconPos = document->toPlainText().indexOf(QStringLiteral("![icon]"));
+        const QTextBlock block = document->findBlock(iconPos);
+        QVERIFY(block.isValid());
+        QTRY_VERIFY(block.layout() && block.layout()->lineCount() > 1);
+        QVERIFY(!block.blockFormat().nonBreakableLines());
+        QVERIFY(block.blockFormat().bottomMargin() >= 40.0);
+
+        const auto caretAt = [editor](int position) {
+            QRectF caret;
+            QMetaObject::invokeMethod(editor, "positionToRectangle",
+                                      Q_RETURN_ARG(QRectF, caret), Q_ARG(int, position));
+            return caret;
+        };
+        auto *editorItem = qobject_cast<QQuickItem *>(editor);
+        QQuickItem *badge = nullptr;
+        QTRY_VERIFY((badge = [&]() -> QQuickItem * {
+            for (QQuickItem *item : findNamedItems(window.data(), QStringLiteral("imageDecoration"))) {
+                if (item->isVisible() && item->height() == 40.0)
+                    return item;
+            }
+            return nullptr;
+        }()));
+        const QPointF origin = badge->mapToItem(editorItem, QPointF(0, 0));
+        const qreal imageTop = origin.y();
+        const qreal imageBottom = origin.y() + badge->height();
+        for (int index = 0; index < block.layout()->lineCount(); ++index) {
+            const QTextLine line = block.layout()->lineAt(index);
+            const QRectF caret = caretAt(block.position() + line.textStart());
+            QVERIFY2(caret.top() + caret.height() <= imageTop + 2.0,
+                     qPrintable(QStringLiteral("line %1 bottom %2 image %3")
+                                    .arg(index)
+                                    .arg(caret.top() + caret.height())
+                                    .arg(imageTop)));
+        }
+        const QRectF after = caretAt(document->toPlainText().indexOf(QStringLiteral("after")));
+        QVERIFY2(after.top() >= imageBottom - 2.0,
+                 qPrintable(QStringLiteral("after %1 image bottom %2").arg(after.top()).arg(imageBottom)));
+        QCOMPARE(editor->property("text").toString(), text);
+    }
+
+    void unlabeledFenceIsPlainCode() {
+        Backend backend;
+        QQmlEngine engine;
+        QObject *editor = nullptr;
+        QScopedPointer<QObject> window(openEditor(backend, engine, &editor));
+        QVERIFY(editor);
+        const QString text = QStringLiteral("```\nreturn [ ] | x\n```\n");
+        editor->setProperty("text", text);
+        editor->setProperty("cursorPosition", 0);
+        QCoreApplication::processEvents();
+
+        QTextDocument *document = editorDocument(editor);
+        QVERIFY(document);
+        const auto foregroundAt = [document](int position) {
+            const QTextBlock block = document->findBlock(position);
+            const int local = position - block.position();
+            QTextCharFormat format;
+            const auto ranges = block.layout() ? block.layout()->formats()
+                                                : QList<QTextLayout::FormatRange>{};
+            for (const QTextLayout::FormatRange &range : ranges) {
+                if (local >= range.start && local < range.start + range.length)
+                    format = range.format;
+            }
+            return format.foreground().color();
+        };
+        const int body = text.indexOf(QStringLiteral("return"));
+        const QColor letter = foregroundAt(body);
+        QCOMPARE(foregroundAt(text.indexOf(QLatin1Char('['))), letter);
+        QCOMPARE(foregroundAt(text.indexOf(QLatin1Char('|'))), letter);
+        QCOMPARE(foregroundAt(text.indexOf(QLatin1Char('x'))), letter);
+        QCOMPARE(foregroundAt(body + 1), letter);
+        QCOMPARE(editor->property("text").toString(), text);
+        Q_UNUSED(window);
+    }
+
+    void fenceLanguageRecolorsWhenTheInfoStringChanges() {
+        Backend backend;
+        QQmlEngine engine;
+        QObject *editor = nullptr;
+        QScopedPointer<QObject> window(openEditor(backend, engine, &editor));
+        QVERIFY(editor);
+        const QString text = QStringLiteral("```cpp\nreturn plain;\n```\n");
+        editor->setProperty("text", text);
+        editor->setProperty("cursorPosition", 0);
+        QCoreApplication::processEvents();
+
+        QTextDocument *document = editorDocument(editor);
+        QVERIFY(document);
+        const auto foregroundAt = [document](int position) {
+            const QTextBlock block = document->findBlock(position);
+            const int local = position - block.position();
+            QTextCharFormat format;
+            const auto ranges = block.layout() ? block.layout()->formats()
+                                                : QList<QTextLayout::FormatRange>{};
+            for (const QTextLayout::FormatRange &range : ranges) {
+                if (local >= range.start && local < range.start + range.length)
+                    format = range.format;
+            }
+            return format.foreground().color();
+        };
+        const int keyword = text.indexOf(QStringLiteral("return"));
+        const int plain = text.indexOf(QStringLiteral("plain"));
+        QVERIFY(foregroundAt(keyword) != foregroundAt(plain));
+
+        QVERIFY(QMetaObject::invokeMethod(editor, "remove", Q_ARG(int, 3), Q_ARG(int, 6)));
+        QVERIFY(QMetaObject::invokeMethod(editor, "insert", Q_ARG(int, 3),
+                                          Q_ARG(QString, QStringLiteral("txt"))));
+        QCoreApplication::processEvents();
+        const QString updated = editor->property("text").toString();
+        QCOMPARE(updated, QStringLiteral("```txt\nreturn plain;\n```\n"));
+        const int keywordNow = updated.indexOf(QStringLiteral("return"));
+        const int plainNow = updated.indexOf(QStringLiteral("plain"));
+        QCOMPARE(foregroundAt(keywordNow), foregroundAt(plainNow));
+        Q_UNUSED(window);
+    }
+
+    void unclosedFenceRunsToTheEnd() {
+        Backend backend;
+        QQmlEngine engine;
+        QObject *editor = nullptr;
+        QScopedPointer<QObject> window(openEditor(backend, engine, &editor));
+        QVERIFY(editor);
+        const QString text = QStringLiteral(
+            "```\n"
+            "- [ ] hidden\n"
+            "| a | b |\n"
+            "| --- | --- |\n"
+            "---\n"
+            "tail\n");
+        editor->setProperty("text", text);
+        editor->setProperty("cursorPosition", 0);
+        QCoreApplication::processEvents();
+
+        const int hidden = text.indexOf(QStringLiteral("[ ]"));
+        QVERIFY(backend.taskAt(hidden).isEmpty());
+        QVERIFY(!backend.toggleTask(hidden));
+        QVERIFY(findNamedItem(window.data(), QStringLiteral("tableFrame")) == nullptr);
+        QVERIFY(findNamedItem(window.data(), QStringLiteral("horizontalRule")) == nullptr);
+        QTextDocument *document = editorDocument(editor);
+        QVERIFY(document);
+        const QTextBlock tail = document->findBlock(text.indexOf(QStringLiteral("tail")));
+        QCOMPARE(tail.blockFormat().leftMargin(), MarkdownHighlighter::codeBlockInset);
+        QCOMPARE(editor->property("text").toString(), text);
+    }
+
+    void backtickInInfoStringIsNotAFence() {
+        Backend backend;
+        QQmlEngine engine;
+        QObject *editor = nullptr;
+        QScopedPointer<QObject> window(openEditor(backend, engine, &editor));
+        QVERIFY(editor);
+        const QString text = QStringLiteral("```js`more\n- [ ] live\n");
+        editor->setProperty("text", text);
+        editor->setProperty("cursorPosition", 0);
+        QCoreApplication::processEvents();
+
+        QTextDocument *document = editorDocument(editor);
+        QVERIFY(document);
+        const QTextBlock opener = document->findBlock(0);
+        QCOMPARE(opener.blockFormat().leftMargin(), qreal(0));
+        QCOMPARE(opener.blockFormat().topMargin(), qreal(0));
+        const int live = text.indexOf(QStringLiteral("[ ]"));
+        QVERIFY(!backend.taskAt(live).isEmpty());
+        QVERIFY(backend.toggleTask(live));
+        QCoreApplication::processEvents();
+        QVERIFY(editor->property("text").toString().contains(QStringLiteral("- [x] live")));
+        QVERIFY(QMetaObject::invokeMethod(editor, "undo"));
+        QCoreApplication::processEvents();
+        QCOMPARE(editor->property("text").toString(), text);
+        Q_UNUSED(window);
+    }
+
 private:
     QTemporaryDir m_settingsDirectory;
 

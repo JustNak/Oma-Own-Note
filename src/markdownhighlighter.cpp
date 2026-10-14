@@ -251,8 +251,21 @@ void MarkdownHighlighter::rehighlightChange(int position, int charsRemoved, int 
     for (int guard = 0; block.isValid() && guard < limit
          && (block.position() < endPosition || forceNext); ++guard) {
         const int stateBefore = block.userState();
+        CodeLine beforeLine;
+        bool hadLine = false;
+        if (const auto *data = dynamic_cast<const CodeBlockData *>(block.userData())) {
+            beforeLine = data->line;
+            hadLine = true;
+        }
         rehighlightBlock(block);
-        forceNext = block.userState() != stateBefore;
+        const auto *after = dynamic_cast<const CodeBlockData *>(block.userData());
+        const bool carryChanged = !hadLine || !after
+            || after->line.carryKind != beforeLine.carryKind
+            || after->line.carryLength != beforeLine.carryLength
+            || after->line.carryParagraph != beforeLine.carryParagraph
+            || after->line.language != beforeLine.language
+            || after->line.containers != beforeLine.containers;
+        forceNext = block.userState() != stateBefore || carryChanged;
         block = block.next();
     }
     --m_highlightDepth;
@@ -298,15 +311,8 @@ CodeLine MarkdownHighlighter::codeLine(const QTextBlock &block) const {
         return {};
     if (const auto *data = dynamic_cast<const CodeBlockData *>(block.userData()))
         return data->line;
-    const int state = block.previous().isValid() && block.previous().userState() >= 0
-        ? block.previous().userState()
-        : 0;
-    CodeLine line = CodeBlocks::classify(block.text(), state, block);
-    if (line.inCode && !line.opener && block.previous().isValid()) {
-        if (const auto *previous = dynamic_cast<const CodeBlockData *>(block.previous().userData()))
-            line.language = previous->line.language;
-    }
-    return line;
+    const int state = block.previous().isValid() ? block.previous().userState() : -1;
+    return CodeBlocks::classify(block.text(), state, block);
 }
 
 bool MarkdownHighlighter::blockInCode(const QTextBlock &block) const {
@@ -642,12 +648,7 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
     const HighlightDepth depth(m_highlightDepth);
     notePainted(currentBlock().blockNumber());
     const int previous = previousBlockState();
-    CodeLine line = CodeBlocks::classify(text, previous, currentBlock());
-    if (line.inCode && !line.opener && currentBlock().previous().isValid()) {
-        if (const auto *earlier = dynamic_cast<const CodeBlockData *>(
-                currentBlock().previous().userData()))
-            line.language = earlier->line.language;
-    }
+    const CodeLine line = CodeBlocks::classify(text, previous, currentBlock());
     auto *data = new CodeBlockData;
     data->line = line;
     setCurrentBlockUserData(data);
@@ -689,6 +690,9 @@ void MarkdownHighlighter::highlightBlock(const QString &text) {
 bool MarkdownHighlighter::highlightFenceBody(const QString &text, const QString &language,
                                             bool continuedComment) {
     setFormat(0, text.length(), m_codeFormat);
+    // An unlabeled fence is plain code. Marker characters stay the code color.
+    if (language.isEmpty())
+        return false;
     enum class Token { Plain, Keyword, String, Comment, Number };
     QVector<Token> kinds(text.size(), Token::Plain);
     const auto mark = [&kinds](int from, int to, Token kind) {

@@ -951,6 +951,8 @@ QVariantList Backend::decorationsForRange(int fromBlock, int toBlock) const {
                 classified.insert(QStringLiteral("displayWidth"), display.width());
                 classified.insert(QStringLiteral("displayHeight"), display.height());
                 classified.insert(QStringLiteral("stack"), stack);
+                classified.insert(QStringLiteral("lineEnd"),
+                                 block.position() + qMax(0, text.size() - 1));
                 stack += display.height();
                 next.append(classified);
             }
@@ -1550,19 +1552,21 @@ void Backend::applyBlockMetrics(QTextCursor &cursor, const QTextBlock &block) {
     } else {
         const QList<MarkdownHighlighter::ImageSpan> images =
             MarkdownHighlighter::imageSpans(text);
-        if (!images.isEmpty()) {
-            // The caret rect sits on the markdown, so the reserved gap has to
-            // be below it and as tall as the pictures actually draw.
-            int reserved = 0;
-            for (const MarkdownHighlighter::ImageSpan &image : images)
-                reserved += imageDisplaySize(classifyImageDestination(image.destination)).height();
-            format.setLineHeight(100, QTextBlockFormat::ProportionalHeight);
-            format.setBottomMargin(reserved);
-            format.setNonBreakableLines(true);
-            format.clearBackground();
-        } else if (MarkdownHighlighter::isTableRow(text)) {
+        int reserved = 0;
+        for (const MarkdownHighlighter::ImageSpan &image : images)
+            reserved += imageDisplaySize(classifyImageDestination(image.destination)).height();
+        if (MarkdownHighlighter::isTableRow(text)) {
             format.setLineHeight(typoraLineHeightPercent, QTextBlockFormat::ProportionalHeight);
             format.setNonBreakableLines(true);
+            format.setBottomMargin(reserved);
+            format.clearBackground();
+        } else if (!images.isEmpty()) {
+            // The picture sits in the margin under the whole block. The line
+            // itself still wraps, so a badge in a long paragraph does not
+            // freeze the paragraph onto one line.
+            format.setLineHeight(100, QTextBlockFormat::ProportionalHeight);
+            format.setBottomMargin(reserved);
+            format.setNonBreakableLines(false);
             format.clearBackground();
         } else {
             format.setLineHeight(typoraLineHeightPercent, QTextBlockFormat::ProportionalHeight);

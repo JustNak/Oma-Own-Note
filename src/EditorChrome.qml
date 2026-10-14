@@ -109,13 +109,16 @@ Item {
                 readonly property int displayHeight: overlay.modelData.displayHeight || 36
                 readonly property int stackOffset: overlay.modelData.stack || 0
                 readonly property rect startRect: chrome.rectAt(overlay.modelData.start)
+                readonly property int lineEnd: overlay.modelData.lineEnd === undefined
+                        ? overlay.modelData.start : overlay.modelData.lineEnd
+                readonly property rect lineRect: chrome.rectAt(lineEnd)
                 readonly property bool remoteAllowed: overlay.modelData.mode === "remote"
                         && chrome.consentedRemote[overlay.modelData.remoteUrl] === true
                 readonly property int labelSize: chrome.editorItem
                         ? Math.max(11, Math.round(chrome.editorItem.font.pixelSize * 0.65))
                         : 13
                 x: startRect.x
-                y: startRect.y + startRect.height + stackOffset
+                y: lineRect.y + lineRect.height + stackOffset
                 width: Math.max(displayWidth, placeholder.implicitWidth + 16)
                 height: displayHeight
                 clip: true
