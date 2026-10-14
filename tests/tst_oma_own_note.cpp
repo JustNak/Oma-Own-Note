@@ -12,6 +12,7 @@
 #include <QTemporaryDir>
 #include <QTextDocument>
 #include <QFont>
+#include <QFontInfo>
 #include <QFontMetricsF>
 #include <QImage>
 #include <QPainter>
@@ -40,6 +41,19 @@ private slots:
         QSettings::setDefaultFormat(QSettings::IniFormat);
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                            m_settingsDirectory.path());
+        // The app registers these in main(). Without them the editor falls
+        // back to whatever sans the runner has, and glyph widths are not the
+        // ones the editor ships with.
+        for (const char *face : {
+                 "../fonts/iAWriterMonoS-Regular.ttf",
+                 "../fonts/iAWriterMonoS-Italic.ttf",
+                 "../fonts/iAWriterMonoS-Bold.ttf",
+                 "../fonts/iAWriterMonoS-BoldItalic.ttf",
+             }) {
+            const QString path = QFINDTESTDATA(face);
+            QVERIFY2(!path.isEmpty(), face);
+            QVERIFY2(QFontDatabase::addApplicationFont(path) >= 0, qPrintable(path));
+        }
     }
 
     void countsWords() {
@@ -949,10 +963,6 @@ private slots:
         QVERIFY2(qAbs(rightHeader.second - rightBody.second) < 2.0,
                  qPrintable(QStringLiteral("right %1 vs %2")
                                 .arg(rightHeader.second).arg(rightBody.second)));
-        const QTextBlock body = document->findBlock(document->toPlainText().indexOf(bodyLine));
-        const qreal em = body.layout()->lineAt(0).cursorToX(body.text().indexOf(QLatin1Char('a')) + 1)
-            - body.layout()->lineAt(0).cursorToX(body.text().indexOf(QLatin1Char('a')));
-
         QTRY_VERIFY(findNamedItem(window.data(), QStringLiteral("tableFrame")));
 
         const int alder = text.indexOf(QStringLiteral("alder"));
@@ -962,9 +972,76 @@ private slots:
 
         const QTextBlock raw = document->findBlock(document->toPlainText().indexOf(
             QStringLiteral("| Left | Center | Right |")));
+        QVERIFY(raw.layout());
+        QVERIFY(raw.layout()->lineCount() > 0);
         const qreal pipe = raw.layout()->lineAt(0).cursorToX(1) - raw.layout()->lineAt(0).cursorToX(0);
-        QVERIFY2(pipe > em * 0.6, qPrintable(QStringLiteral("raw pipe %1 em %2").arg(pipe).arg(em)));
+        QTextCharFormat pipeFormat;
+        const auto ranges = raw.layout()->formats();
+        for (const QTextLayout::FormatRange &range : ranges) {
+            if (range.start <= 0 && 0 < range.start + range.length)
+                pipeFormat = range.format;
+        }
+        // A rendered pipe is a 1px hairline. A raw pipe keeps the glyph's own
+        // advance. The width of 'a' is the wrong yardstick: DejaVu Sans draws
+        // '|' at 6.73px and 'a' at 12.25px.
+        QVERIFY(qFuzzyIsNull(pipeFormat.fontPointSize()) || pipeFormat.fontPointSize() > 8);
+        if (pipeFormat.fontLetterSpacingType() == QFont::AbsoluteSpacing)
+            QVERIFY2(qAbs(pipeFormat.fontLetterSpacing()) < 1.0,
+                     qPrintable(QStringLiteral("pipe spacing %1").arg(pipeFormat.fontLetterSpacing())));
+        QFont pipeFont = document->defaultFont();
+        QCOMPARE(QFontInfo(pipeFont).family(), QStringLiteral("iA Writer Mono S"));
+        if (pipeFormat.hasProperty(QTextFormat::FontPixelSize))
+            pipeFont.setPixelSize(pipeFormat.intProperty(QTextFormat::FontPixelSize));
+        else if (pipeFormat.fontPointSize() > 0)
+            pipeFont.setPointSizeF(pipeFormat.fontPointSize());
+        const qreal natural = QFontMetricsF(pipeFont).horizontalAdvance(QLatin1Char('|'));
+        QVERIFY2(natural > 2.0, qPrintable(QStringLiteral("natural pipe %1").arg(natural)));
+        QVERIFY2(pipe > natural * 0.6,
+                 qPrintable(QStringLiteral("raw pipe %1 natural %2").arg(pipe).arg(natural)));
         QCOMPARE(editor->property("text").toString(), text);
+    }
+
+    void rawTablePipeKeepsItsOwnAdvance() {
+        QTextDocument document;
+        QFont font(QStringLiteral("DejaVu Sans"));
+        font.setPixelSize(20);
+        QCOMPARE(QFontInfo(font).family(), QStringLiteral("DejaVu Sans"));
+        document.setDefaultFont(font);
+        document.setTextWidth(2000);
+        const QString text = QStringLiteral(
+            "note\n"
+            "\n"
+            "| Left | Center | Right |\n"
+            "| :--- | :----: | ----: |\n"
+            "| alder | ash | elm |\n");
+        document.setPlainText(text);
+
+        MarkdownHighlighter highlighter(&document);
+        highlighter.setColors(QStringLiteral("#ffffff"), QStringLiteral("#222324"),
+                              QStringLiteral("#2077b2"));
+        const auto pipeAdvance = [&document, &text]() {
+            QImage surface(8, 8, QImage::Format_ARGB32_Premultiplied);
+            QPainter painter(&surface);
+            document.drawContents(&painter);
+            painter.end();
+            const QTextBlock header = document.findBlock(text.indexOf(QStringLiteral("| Left")));
+            if (!header.isValid() || !header.layout() || header.layout()->lineCount() < 1)
+                return qreal(-1);
+            const QTextLine line = header.layout()->lineAt(0);
+            return line.cursorToX(1) - line.cursorToX(0);
+        };
+        const qreal natural = QFontMetricsF(font).horizontalAdvance(QLatin1Char('|'));
+        QVERIFY2(natural > 2.0, qPrintable(QStringLiteral("natural %1").arg(natural)));
+
+        highlighter.setEditingPosition(0);
+        const qreal rendered = pipeAdvance();
+        QVERIFY2(rendered >= 0 && rendered < natural * 0.6,
+                 qPrintable(QStringLiteral("rendered pipe %1 natural %2").arg(rendered).arg(natural)));
+
+        highlighter.setEditingPosition(text.indexOf(QStringLiteral("alder")));
+        const qreal raw = pipeAdvance();
+        QVERIFY2(raw > natural * 0.6,
+                 qPrintable(QStringLiteral("raw pipe %1 natural %2").arg(raw).arg(natural)));
     }
 
     void clickingATaskTogglesOnlyTheBoxAndUndoes() {
