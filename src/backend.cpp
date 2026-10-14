@@ -1,5 +1,7 @@
 #include "backend.h"
 
+#include <QUrlQuery>
+
 #include <QClipboard>
 #include <QColor>
 #include <QCoreApplication>
@@ -383,10 +385,10 @@ bool Backend::editorTextChanged() {
     m_lastDocumentText = text;
 
     if (m_document) {
-        const int blockCount = m_document->blockCount();
-        if (blockCount > m_formattedBlockCount)
-            reapplyTypographyToChange();
-        m_formattedBlockCount = blockCount;
+        // Block metrics (image height, code inset, unwrapped table rows) follow
+        // the text. Joining the previous edit keeps that with the same undo step.
+        reapplyTypographyToChange();
+        m_formattedBlockCount = m_document->blockCount();
     }
 
     scheduleWordCount();
@@ -400,9 +402,15 @@ bool Backend::editorTextChanged() {
 bool Backend::editingInside(const QTextBlock &block) const {
     if (m_editingPosition < 0 || !block.isValid())
         return false;
+    int from = m_editingPosition;
+    int to = m_editingPosition;
+    if (m_selectionStart >= 0 && m_selectionEnd >= 0) {
+        from = qMin(from, qMin(m_selectionStart, m_selectionEnd));
+        to = qMax(to, qMax(m_selectionStart, m_selectionEnd));
+    }
     const int start = block.position();
-    const int end = start + block.length() - 1;
-    return m_editingPosition >= start && m_editingPosition <= end;
+    const int end = start + qMax(0, block.length() - 1);
+    return to >= start && from <= end;
 }
 
 QString Backend::themeMuted() const {
@@ -422,6 +430,8 @@ QVariantList Backend::hiddenRangesAt(int position) const {
     const int lineStart = block.position();
     const bool legacy = m_editingPosition < 0;
     const bool onLine = editingInside(block);
+    if (m_highlighter && m_highlighter->blockInFence(block))
+        return ranges;
     QList<QPair<int, int>> spans;
     if (legacy || !onLine) {
         const QList<MarkdownHighlighter::InlineMarkup> markup =
@@ -438,6 +448,18 @@ QVariantList Backend::hiddenRangesAt(int position) const {
             for (const MarkdownHighlighter::ImageSpan &image : images) {
                 spans.append({lineStart + image.start,
                               lineStart + image.start + image.length});
+            }
+            static const QRegularExpression bracketed(
+                QStringLiteral("<((?:https?://|mailto:)[^\\s>]+)>"));
+            QRegularExpressionMatchIterator matches = bracketed.globalMatch(block.text());
+            while (matches.hasNext()) {
+                const QRegularExpressionMatch match = matches.next();
+                const int start = lineStart + int(match.capturedStart(0));
+                const int end = start + int(match.capturedLength(0));
+                if (end - start >= 2) {
+                    spans.append({start, start + 1});
+                    spans.append({end - 1, end});
+                }
             }
         }
     }
@@ -487,28 +509,34 @@ bool Backend::openExternalUrl(const QUrl &url) {
     if (scheme != QStringLiteral("http") && scheme != QStringLiteral("https")
             && scheme != QStringLiteral("mailto"))
         return false;
+    QUrl opened = url;
+    if (scheme == QStringLiteral("mailto")) {
+        const QString cleaned = safeLinkTarget(url.toString());
+        if (cleaned.isEmpty())
+            return false;
+        opened = QUrl(cleaned);
+    }
     // Offscreen test runs have no desktop handler; opening xdg-open there can hang.
     if (qEnvironmentVariable("QT_QPA_PLATFORM") == QLatin1String("offscreen"))
         return true;
-    return QDesktopServices::openUrl(url);
+    return QDesktopServices::openUrl(opened);
 }
 
 void Backend::setEditingPosition(int position) {
-    if (m_editingPosition == position)
+    setEditingRange(position, position, position);
+}
+
+void Backend::setEditingRange(int cursor, int selectionStart, int selectionEnd) {
+    if (m_editingPosition == cursor && m_selectionStart == selectionStart
+            && m_selectionEnd == selectionEnd)
         return;
-    const int previous = !m_document || m_editingPosition < 0
-        ? -1
-        : m_document->findBlock(qBound(0, m_editingPosition, m_document->characterCount() - 1))
-              .blockNumber();
-    m_editingPosition = position;
+    m_editingPosition = cursor;
+    m_selectionStart = selectionStart;
+    m_selectionEnd = selectionEnd;
+    bool revealChanged = true;
     if (m_highlighter)
-        m_highlighter->setEditingPosition(position);
-    int next = -1;
-    if (m_document && position >= 0) {
-        next = m_document->findBlock(qBound(0, position, m_document->characterCount() - 1))
-                   .blockNumber();
-    }
-    if (previous != next)
+        revealChanged = m_highlighter->setEditingRange(cursor, selectionStart, selectionEnd);
+    if (revealChanged)
         rebuildDecorations();
 }
 
@@ -521,9 +549,22 @@ QString Backend::safeLinkTarget(const QString &destination) const {
         target.prepend(QStringLiteral("https://"));
     const QUrl url(target);
     const QString scheme = url.scheme().toLower();
-    if (scheme == QStringLiteral("http") || scheme == QStringLiteral("https")
-            || scheme == QStringLiteral("mailto"))
+    if (scheme == QStringLiteral("http") || scheme == QStringLiteral("https"))
         return url.toString();
+    if (scheme == QStringLiteral("mailto")) {
+        QUrlQuery kept;
+        const QUrlQuery query(url);
+        for (const auto &item : query.queryItems(QUrl::FullyDecoded)) {
+            const QString key = item.first.toLower();
+            if (key == QLatin1String("subject") || key == QLatin1String("body"))
+                kept.addQueryItem(key, item.second);
+        }
+        QUrl cleaned = url;
+        cleaned.setQuery(kept);
+        if (kept.isEmpty())
+            cleaned.setQuery(QString());
+        return cleaned.toString();
+    }
     return {};
 }
 
@@ -572,7 +613,7 @@ QVariantMap Backend::taskAt(int position) const {
         return {};
     const QTextBlock block =
         m_document->findBlock(qBound(0, position, m_document->characterCount() - 1));
-    if (!block.isValid())
+    if (!block.isValid() || (m_highlighter && m_highlighter->blockInFence(block)))
         return {};
     static const QRegularExpression taskRe(
         QStringLiteral("^\\s*(?:[-+*]|\\d+[.)])\\s+(\\[[ xX]\\])"));
@@ -631,35 +672,48 @@ QVariantMap Backend::classifyImageDestination(const QString &destination) const 
                            {QStringLiteral("remoteUrl"), url}};
     };
 
-    QString decoded = QUrl::fromPercentEncoding(destination.trimmed().toUtf8()).trimmed();
-    if (decoded.startsWith(QLatin1Char('<')) && decoded.endsWith(QLatin1Char('>'))
-            && decoded.size() >= 2)
-        decoded = QUrl::fromPercentEncoding(decoded.mid(1, decoded.size() - 2).trimmed().toUtf8());
-    if (decoded.isEmpty())
-        return rejected(QStringLiteral("empty"));
-    if (decoded.startsWith(QLatin1String("//")))
-        return remote(decoded);
+    QString raw = destination.trimmed();
+    if (raw.startsWith(QLatin1Char('<')) && raw.endsWith(QLatin1Char('>')) && raw.size() >= 2)
+        raw = raw.mid(1, raw.size() - 2).trimmed();
+    const QString cacheKey = noteRoot() + QLatin1Char('\n') + raw;
+    const auto cached = m_imageClassCache.constFind(cacheKey);
+    if (cached != m_imageClassCache.constEnd())
+        return cached.value();
+    const auto store = [this, &cacheKey](const QVariantMap &value) {
+        m_imageClassCache.insert(cacheKey, value);
+        return value;
+    };
+    if (raw.isEmpty())
+        return store(rejected(QStringLiteral("empty")));
+    // Keep the original remote spelling. Decoding first turned https://host/a%20b
+    // into a different URL, and a scheme-relative //host resolved against qrc:/.
+    if (raw.startsWith(QLatin1String("//")))
+        return store(remote(QStringLiteral("https:") + raw));
+    if (raw.startsWith(QLatin1String("http://"), Qt::CaseInsensitive)
+            || raw.startsWith(QLatin1String("https://"), Qt::CaseInsensitive))
+        return store(remote(raw));
 
+    QString decoded = QUrl::fromPercentEncoding(raw.toUtf8()).trimmed();
     const QUrl parsed(decoded);
     const QString scheme = parsed.scheme().toLower();
     if (scheme == QLatin1String("http") || scheme == QLatin1String("https"))
-        return remote(decoded);
+        return store(remote(decoded));
     if (scheme == QLatin1String("javascript") || scheme == QLatin1String("data"))
-        return rejected(scheme);
+        return store(rejected(scheme));
     if (scheme == QLatin1String("file") || decoded.startsWith(QLatin1String("file:"), Qt::CaseInsensitive)) {
         if (!parsed.host().isEmpty())
-            return rejected(QStringLiteral("file-host"));
+            return store(rejected(QStringLiteral("file-host")));
         QString path = parsed.toLocalFile();
         if (path.isEmpty())
             path = parsed.path();
         decoded = path;
     } else if (!scheme.isEmpty()) {
-        return rejected(QStringLiteral("scheme"));
+        return store(rejected(QStringLiteral("scheme")));
     }
 
     const QString root = noteRoot();
     if (root.isEmpty())
-        return rejected(QStringLiteral("no-root"));
+        return store(rejected(QStringLiteral("no-root")));
 
     const bool absolute = decoded.startsWith(QLatin1Char('/'))
         || QDir::isAbsolutePath(decoded);
@@ -675,30 +729,30 @@ QVariantMap Backend::classifyImageDestination(const QString &destination) const 
         const QString name = walk.fileName();
         const QString parent = walk.absolutePath();
         if (name.isEmpty() || parent == walk.absoluteFilePath())
-            return rejected(absolute ? QStringLiteral("absolute") : QStringLiteral("escape"));
+            return store(rejected(absolute ? QStringLiteral("absolute") : QStringLiteral("escape")));
         pending.prepend(name);
         walk = QFileInfo(parent);
     }
     QString combined = walk.canonicalFilePath();
     if (combined.isEmpty())
-        return rejected(absolute ? QStringLiteral("absolute") : QStringLiteral("escape"));
+        return store(rejected(absolute ? QStringLiteral("absolute") : QStringLiteral("escape")));
     for (const QString &part : pending)
         combined = QDir::cleanPath(QDir(combined).filePath(part));
     if (combined != rootCanon && !combined.startsWith(rootCanon + QLatin1Char('/')))
-        return rejected(absolute ? QStringLiteral("absolute") : QStringLiteral("escape"));
+        return store(rejected(absolute ? QStringLiteral("absolute") : QStringLiteral("escape")));
 
     if (QFileInfo::exists(combined)) {
-        return {{QStringLiteral("mode"), QStringLiteral("local")},
-                {QStringLiteral("reason"), QString()},
-                {QStringLiteral("source"), QUrl::fromLocalFile(combined).toString()},
-                {QStringLiteral("remoteUrl"), QString()},
-                {QStringLiteral("path"), combined}};
+        return store({{QStringLiteral("mode"), QStringLiteral("local")},
+                      {QStringLiteral("reason"), QString()},
+                      {QStringLiteral("source"), QUrl::fromLocalFile(combined).toString()},
+                      {QStringLiteral("remoteUrl"), QString()},
+                      {QStringLiteral("path"), combined}});
     }
-    return {{QStringLiteral("mode"), QStringLiteral("missing")},
-            {QStringLiteral("reason"), QStringLiteral("missing")},
-            {QStringLiteral("source"), QString()},
-            {QStringLiteral("remoteUrl"), QString()},
-            {QStringLiteral("path"), combined}};
+    return store({{QStringLiteral("mode"), QStringLiteral("missing")},
+                  {QStringLiteral("reason"), QStringLiteral("missing")},
+                  {QStringLiteral("source"), QString()},
+                  {QStringLiteral("remoteUrl"), QString()},
+                  {QStringLiteral("path"), combined}});
 }
 
 QVariantMap Backend::imageAt(int position) const {
@@ -727,12 +781,19 @@ QVariantMap Backend::imageAt(int position) const {
 void Backend::rebuildDecorations() {
     QVariantList next;
     if (m_document && m_editingPosition >= 0) {
+        const auto fenced = [this](const QTextBlock &block) {
+            return m_highlighter && m_highlighter->blockInFence(block);
+        };
         for (QTextBlock block = m_document->begin(); block.isValid(); block = block.next()) {
+            if (fenced(block))
+                continue;
             const QString text = block.text();
             static const QRegularExpression taskRe(
                 QStringLiteral("^\\s*(?:[-+*]|\\d+[.)])\\s+(\\[[ xX]\\])"));
             const QRegularExpressionMatch task = taskRe.match(text);
-            if (task.hasMatch()) {
+            // The box is only the rendered stand-in. On the line itself the
+            // source "[ ]" / "[x]" has to be visible and editable.
+            if (task.hasMatch() && !editingInside(block)) {
                 const int start = block.position() + int(task.capturedStart(1));
                 const QString box = task.captured(1);
                 next.append(QVariantMap{
@@ -762,10 +823,45 @@ void Backend::rebuildDecorations() {
                     next.append(classified);
                 }
             }
+
+            if (!text.trimmed().startsWith(QLatin1Char('>')))
+                continue;
+            if (block.previous().isValid()
+                    && block.previous().text().trimmed().startsWith(QLatin1Char('>'))
+                    && !fenced(block.previous()))
+                continue;
+            bool revealed = false;
+            QList<QTextBlock> quoteRows;
+            for (QTextBlock row = block; row.isValid()
+                 && row.text().trimmed().startsWith(QLatin1Char('>')) && !fenced(row);
+                 row = row.next()) {
+                quoteRows.append(row);
+                if (editingInside(row))
+                    revealed = true;
+            }
+            if (revealed)
+                continue;
+            static const QRegularExpression quoteMark(QStringLiteral(">"));
+            for (const QTextBlock &row : quoteRows) {
+                QVariantList bars;
+                const int content = row.text().indexOf(QRegularExpression(QStringLiteral("[^>\\s]")));
+                QRegularExpressionMatchIterator marks = quoteMark.globalMatch(row.text());
+                while (marks.hasNext()) {
+                    const QRegularExpressionMatch mark = marks.next();
+                    if (content >= 0 && mark.capturedStart(0) >= content)
+                        break;
+                    bars.append(row.position() + int(mark.capturedStart(0)));
+                }
+                next.append(QVariantMap{
+                    {QStringLiteral("kind"), QStringLiteral("quote")},
+                    {QStringLiteral("start"), row.position()},
+                    {QStringLiteral("end"), row.position() + row.text().size()},
+                    {QStringLiteral("bars"), bars}});
+            }
         }
 
         for (QTextBlock block = m_document->begin(); block.isValid();) {
-            if (!MarkdownHighlighter::isTableRow(block.text())) {
+            if (!MarkdownHighlighter::isTableRow(block.text()) || fenced(block)) {
                 block = block.next();
                 continue;
             }
@@ -773,33 +869,45 @@ void Backend::rebuildDecorations() {
             QTextBlock end = block;
             bool separator = MarkdownHighlighter::isTableSeparator(block.text());
             bool raw = editingInside(block);
-            while (end.next().isValid() && MarkdownHighlighter::isTableRow(end.next().text())) {
+            while (end.next().isValid() && MarkdownHighlighter::isTableRow(end.next().text())
+                   && !fenced(end.next())) {
                 end = end.next();
                 separator = separator || MarkdownHighlighter::isTableSeparator(end.text());
                 raw = raw || editingInside(end);
             }
             if (separator && !raw) {
-                QVariantList pipes;
-                const MarkdownHighlighter::TableLine header =
-                    MarkdownHighlighter::parseTableLine(start.text());
-                for (const MarkdownHighlighter::Span &pipe : header.hidden)
-                    pipes.append(start.position() + pipe.start);
+                QTextBlock pipeRow = start;
+                int pipeCount = 0;
+                QVariantList rowStarts;
                 int headerEnd = -1;
                 for (QTextBlock row = start; row.isValid(); row = row.next()) {
-                    if (MarkdownHighlighter::isTableSeparator(row.text()) && row.previous().isValid()
-                            && row.previous().position() >= start.position()) {
-                        headerEnd = row.previous().position() + row.previous().text().size();
-                        break;
+                    const MarkdownHighlighter::TableLine parsed =
+                        MarkdownHighlighter::parseTableLine(row.text());
+                    if (parsed.hidden.size() > pipeCount) {
+                        pipeCount = parsed.hidden.size();
+                        pipeRow = row;
                     }
+                    if (!MarkdownHighlighter::isTableSeparator(row.text()))
+                        rowStarts.append(row.position());
+                    if (headerEnd < 0 && MarkdownHighlighter::isTableSeparator(row.text())
+                            && row.previous().isValid()
+                            && row.previous().position() >= start.position())
+                        headerEnd = row.previous().position() + row.previous().text().size();
                     if (row == end)
                         break;
                 }
+                QVariantList pipes;
+                const MarkdownHighlighter::TableLine widest =
+                    MarkdownHighlighter::parseTableLine(pipeRow.text());
+                for (const MarkdownHighlighter::Span &pipe : widest.hidden)
+                    pipes.append(pipeRow.position() + pipe.start);
                 next.append(QVariantMap{
                     {QStringLiteral("kind"), QStringLiteral("table")},
                     {QStringLiteral("start"), start.position()},
                     {QStringLiteral("end"), end.position() + end.text().size()},
                     {QStringLiteral("headerEnd"), headerEnd},
-                    {QStringLiteral("pipes"), pipes}});
+                    {QStringLiteral("pipes"), pipes},
+                    {QStringLiteral("rows"), rowStarts}});
             }
             block = end.next();
         }
@@ -807,17 +915,27 @@ void Backend::rebuildDecorations() {
         bool inFence = false;
         QTextBlock opening;
         for (QTextBlock block = m_document->begin(); block.isValid(); block = block.next()) {
-            if (!block.text().trimmed().startsWith(QLatin1String("```")))
+            if (!MarkdownHighlighter::isFenceMarker(block.text()))
                 continue;
             if (!inFence) {
                 opening = block;
                 inFence = true;
                 continue;
             }
+            bool editingFence = false;
+            for (QTextBlock row = opening; row.isValid(); row = row.next()) {
+                if (editingInside(row))
+                    editingFence = true;
+                if (row == block)
+                    break;
+            }
             next.append(QVariantMap{
                 {QStringLiteral("kind"), QStringLiteral("code")},
                 {QStringLiteral("start"), opening.position()},
-                {QStringLiteral("end"), block.position() + block.text().size()}});
+                {QStringLiteral("end"), block.position() + block.text().size()},
+                {QStringLiteral("language"),
+                 m_highlighter ? m_highlighter->codeLanguage(opening) : QString()},
+                {QStringLiteral("showLabel"), !editingFence}});
             inFence = false;
         }
     }
@@ -868,6 +986,7 @@ void Backend::setFileUrl(const QUrl &url) {
     if (m_fileUrl == url)
         return;
 
+    m_imageClassCache.clear();
     m_fileUrl = url;
     emit fileUrlChanged();
     watchCurrentFile();
@@ -1154,18 +1273,35 @@ void Backend::applyBlockMetrics(QTextCursor &cursor, const QTextBlock &block, bo
     // document size grows the line again. That stays in the highlighter, so
     // moving the caret does not push a block-format edit onto the undo stack.
     QTextCharFormat blockChar;
+    format.setLeftMargin(0);
+    format.setRightMargin(0);
+    format.setTopMargin(0);
+    format.setBottomMargin(0);
+    format.setNonBreakableLines(false);
     if (MarkdownHighlighter::isTableSeparator(text) || fenceMarker) {
         format.setLineHeight(100, QTextBlockFormat::ProportionalHeight);
         format.clearBackground();
         blockChar.setFontPointSize(1);
-    } else if (MarkdownHighlighter::isStandaloneImage(text)) {
-        format.setLineHeight(MarkdownHighlighter::imageLineHeight,
-                             QTextBlockFormat::FixedHeight);
+        if (fenceMarker && !inFence)
+            format.setTopMargin(MarkdownHighlighter::codeBlockInset);
+    } else if (!inFence && MarkdownHighlighter::isStandaloneImage(text)) {
+        // The caret rect sits on the hidden markdown, so the reserved space has
+        // to be below it. A fixed line height leaves the space above the caret
+        // and the image overlay then covers the following paragraph.
+        format.setLineHeight(100, QTextBlockFormat::ProportionalHeight);
+        format.setBottomMargin(MarkdownHighlighter::imageLineHeight);
+        format.setNonBreakableLines(true);
         format.clearBackground();
     } else if (codeBody) {
         format.setLineHeight(typoraLineHeightPercent, QTextBlockFormat::ProportionalHeight);
+        format.setLeftMargin(MarkdownHighlighter::codeBlockInset);
+        format.setRightMargin(MarkdownHighlighter::codeBlockInset);
         format.setBackground(m_darkMode ? QColor(QStringLiteral("#1c1a1a"))
                                         : QColor(QStringLiteral("#f8f8f8")));
+    } else if (!inFence && MarkdownHighlighter::isTableRow(text)) {
+        format.setLineHeight(typoraLineHeightPercent, QTextBlockFormat::ProportionalHeight);
+        format.setNonBreakableLines(true);
+        format.clearBackground();
     } else {
         format.setLineHeight(typoraLineHeightPercent, QTextBlockFormat::ProportionalHeight);
         format.clearBackground();

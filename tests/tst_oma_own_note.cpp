@@ -1,3 +1,4 @@
+#include <QAbstractTextDocumentLayout>
 #include <QApplication>
 #include <QtTest>
 
@@ -1230,6 +1231,7 @@ private slots:
             "![local](sample.png)\n"
             "![remote](https://example.com/a.png)\n"
             "![proto](//cdn.example/a.png)\n"
+            "![spaced](https://cdn.example/my%20file.png)\n"
             "![escape](../secret.png)\n"
             "![abs](/etc/passwd)\n"
             "![fileout](file:///etc/passwd)\n"
@@ -1265,6 +1267,12 @@ private slots:
         QCOMPARE(image(QStringLiteral("proto")).value(QStringLiteral("mode")).toString(),
                  QStringLiteral("remote"));
         QVERIFY(image(QStringLiteral("proto")).value(QStringLiteral("source")).toString().isEmpty());
+        QCOMPARE(image(QStringLiteral("proto")).value(QStringLiteral("remoteUrl")).toString(),
+                 QStringLiteral("https://cdn.example/a.png"));
+        QCOMPARE(image(QStringLiteral("spaced")).value(QStringLiteral("remoteUrl")).toString(),
+                 QStringLiteral("https://cdn.example/my%20file.png"));
+        QVERIFY(!image(QStringLiteral("spaced")).value(QStringLiteral("remoteUrl")).toString().contains(
+            QLatin1Char(' ')));
         QCOMPARE(image(QStringLiteral("escape")).value(QStringLiteral("mode")).toString(),
                  QStringLiteral("rejected"));
         QCOMPARE(image(QStringLiteral("abs")).value(QStringLiteral("mode")).toString(),
@@ -1305,7 +1313,442 @@ private slots:
                 optedIn = true;
         }
         QVERIFY(optedIn);
+        for (QQuickItem *imageObject : findNamedItems(window.data(), QStringLiteral("renderedImage"))) {
+            const QString source = imageObject->property("source").toString();
+            QVERIFY(source != QStringLiteral("https://cdn.example/a.png"));
+            QVERIFY(!source.contains(QStringLiteral("%20")) || source.startsWith(QStringLiteral("file:")));
+        }
+
+        backend.setTextScale(2);
+        QCoreApplication::processEvents();
+        QQuickItem *actionLabel = nullptr;
+        for (QQuickItem *candidate : findNamedItems(window.data(), QStringLiteral("imageActionLabel"))) {
+            if (candidate->property("text").toString() == QStringLiteral("Load image"))
+                actionLabel = candidate;
+        }
+        QVERIFY(actionLabel);
+        const QFont editorFont = editor->property("font").value<QFont>();
+        const QFont labelFont = actionLabel->property("font").value<QFont>();
+        const int expected = qMax(11, qRound(editorFont.pixelSize() * 0.65));
+        QCOMPARE(labelFont.pixelSize(), expected);
+        QVERIFY(labelFont.pixelSize() > 13);
         QCOMPARE(editor->property("text").toString(), text);
+    }
+
+    void renderedPipesDisappearAndShortRowsShareTheFrame() {
+        const auto escaped = MarkdownHighlighter::parseTableLine(
+            QStringLiteral("| a \\| b | `c|d` |"));
+        QCOMPARE(escaped.cells.size(), 2);
+        QVERIFY(escaped.cells.at(0).length > 0);
+        QCOMPARE(escaped.hidden.size(), 3);
+        const QString escapedCell = QStringLiteral("| a \\| b | `c|d` |").mid(
+            escaped.cells.at(0).start, escaped.cells.at(0).length);
+        QVERIFY(escapedCell.contains(QStringLiteral("\\|")));
+        const QString codeCell = QStringLiteral("| a \\| b | `c|d` |").mid(
+            escaped.cells.at(1).start, escaped.cells.at(1).length);
+        QVERIFY(codeCell.contains(QStringLiteral("c|d")));
+
+        Backend backend;
+        QQmlEngine engine;
+        QObject *editor = nullptr;
+        QScopedPointer<QObject> window(openEditor(backend, engine, &editor));
+        QVERIFY(editor);
+
+        const QString wide(100, QChar(0x6c49));
+        const QString text = QStringLiteral("note\n"
+                                            "\n"
+                                            "| alpha | beta | gamma |\n"
+                                            "| :--- | :----: | ----: |\n"
+                                            "| only |\n"
+                                            "| ")
+            + wide + QStringLiteral(" | short |\n");
+        editor->setProperty("text", text);
+        editor->setProperty("cursorPosition", 0);
+        QCoreApplication::processEvents();
+
+        QTextDocument *document = editorDocument(editor);
+        QVERIFY(document);
+        const auto formatAt = [document](int position) {
+            const QTextBlock block = document->findBlock(position);
+            const int local = position - block.position();
+            QTextCharFormat format;
+            const auto ranges = block.layout() ? block.layout()->formats() : QList<QTextLayout::FormatRange>{};
+            for (const QTextLayout::FormatRange &range : ranges) {
+                if (local >= range.start && local < range.start + range.length)
+                    format = range.format;
+            }
+            return format;
+        };
+        const int headerPipe = text.indexOf(QLatin1Char('|'));
+        const QTextBlock header = document->findBlock(headerPipe);
+        QVERIFY(header.layout());
+        QVERIFY(header.layout()->lineCount() > 0);
+        const qreal pipeAdvance = header.layout()->lineAt(0).cursorToX(1)
+            - header.layout()->lineAt(0).cursorToX(0);
+        QVERIFY2(pipeAdvance <= 2.0,
+                 qPrintable(QStringLiteral("rendered pipe %1").arg(pipeAdvance)));
+        QCOMPARE(formatAt(headerPipe).foreground().color().alpha(), 0);
+        QCOMPARE(formatAt(headerPipe).fontPointSize(), 1.0);
+
+        int rowCount = 0;
+        for (const QVariant &entry : backend.decorations()) {
+            const QVariantMap map = entry.toMap();
+            if (map.value(QStringLiteral("kind")).toString() == QStringLiteral("table"))
+                rowCount = map.value(QStringLiteral("rows")).toList().size();
+        }
+        QCOMPARE(rowCount, 3);
+        QCOMPARE(findNamedItems(window.data(), QStringLiteral("tableRowRule")).size(), 2);
+
+        const auto edgeX = [document](const QString &line) {
+            const int start = document->toPlainText().indexOf(line);
+            const QTextBlock block = document->findBlock(start);
+            const QTextLine textLine = block.layout()->lineAt(0);
+            return textLine.cursorToX(line.size());
+        };
+        const QString headerLine = QStringLiteral("| alpha | beta | gamma |");
+        const QString shortLine = QStringLiteral("| only |");
+        const qreal headerEdge = edgeX(headerLine);
+        const qreal shortEdge = edgeX(shortLine);
+        QVERIFY2(qAbs(headerEdge - shortEdge) < 4.0,
+                 qPrintable(QStringLiteral("header edge %1 short edge %2")
+                                .arg(headerEdge).arg(shortEdge)));
+        QQuickItem *frame = nullptr;
+        QTRY_VERIFY((frame = findNamedItem(window.data(), QStringLiteral("tableFrame"))));
+        const QTextBlock headerBlock = document->findBlock(document->toPlainText().indexOf(headerLine));
+        const QTextLine headerTextLine = headerBlock.layout()->lineAt(0);
+        const qreal pipesWidth = headerTextLine.cursorToX(headerLine.size()) - headerTextLine.cursorToX(0);
+        QVERIFY2(qAbs(frame->width() - pipesWidth) < 4.0,
+                 qPrintable(QStringLiteral("frame %1 pipes %2").arg(frame->width()).arg(pipesWidth)));
+
+        const int wideRow = text.indexOf(wide);
+        const QTextBlock wideBlock = document->findBlock(wideRow);
+        QVERIFY(wideBlock.blockFormat().nonBreakableLines());
+        QVERIFY(wideBlock.layout());
+        QCOMPARE(wideBlock.layout()->lineCount(), 1);
+        QVERIFY2(document->textWidth() > 0
+                     && wideBlock.layout()->lineAt(0).naturalTextWidth() > document->textWidth(),
+                 qPrintable(QStringLiteral("wide %1 text width %2")
+                                .arg(wideBlock.layout()->lineAt(0).naturalTextWidth())
+                                .arg(document->textWidth())));
+        QFont cellFont = document->defaultFont();
+        cellFont.setWeight(QFont::Normal);
+        QTextLayout measure(wide, cellFont);
+        measure.beginLayout();
+        QTextLine measured = measure.createLine();
+        if (measured.isValid())
+            measured.setLineWidth(1.0e6);
+        measure.endLayout();
+        const int local = wideRow - wideBlock.position();
+        const QTextLine laid = wideBlock.layout()->lineAt(0);
+        const qreal laidWidth = laid.cursorToX(local + wide.size()) - laid.cursorToX(local);
+        QVERIFY2(laidWidth + 1.0 >= measured.naturalTextWidth(),
+                 qPrintable(QStringLiteral("laid %1 natural %2")
+                                .arg(laidWidth).arg(measured.naturalTextWidth())));
+        QCOMPARE(editor->property("text").toString(), text);
+    }
+
+    void largeImageReservesTheLineBelowIt() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        QImage photo(1400, 900, QImage::Format_ARGB32);
+        photo.fill(QColor(QStringLiteral("#336699")));
+        {
+            QPainter painter(&photo);
+            painter.setPen(Qt::white);
+            painter.drawLine(0, 0, 1399, 899);
+            painter.drawText(QPoint(48, 120), QStringLiteral("large photo"));
+        }
+        QVERIFY(photo.save(directory.filePath(QStringLiteral("wide.png"))));
+        const QString text = QStringLiteral("before\n![photo](wide.png)\nafter\n");
+        QFile note(directory.filePath(QStringLiteral("note.md")));
+        QVERIFY(note.open(QIODevice::WriteOnly | QIODevice::Text));
+        note.write(text.toUtf8());
+        note.close();
+
+        Backend backend;
+        QQmlEngine engine;
+        QObject *editor = nullptr;
+        QScopedPointer<QObject> window(openEditor(backend, engine, &editor));
+        QVERIFY(editor);
+        backend.open(QUrl::fromLocalFile(note.fileName()));
+        editor->setProperty("cursorPosition", 0);
+        QCoreApplication::processEvents();
+
+        QTextDocument *document = editorDocument(editor);
+        QVERIFY(document);
+        const QTextBlock imageBlock = document->findBlock(text.indexOf(QStringLiteral("![")));
+        const QTextBlock next = imageBlock.next();
+        QVERIFY(imageBlock.isValid());
+        QVERIFY(next.isValid());
+        const qreal imageTop = document->documentLayout()->blockBoundingRect(imageBlock).top();
+        const qreal nextTop = document->documentLayout()->blockBoundingRect(next).top();
+        QVERIFY2(nextTop - imageTop >= MarkdownHighlighter::imageLineHeight - 0.5,
+                 qPrintable(QStringLiteral("gap %1").arg(nextTop - imageTop)));
+        QRectF imageCaret;
+        QRectF nextCaret;
+        QVERIFY(QMetaObject::invokeMethod(editor, "positionToRectangle",
+                                          Q_RETURN_ARG(QRectF, imageCaret),
+                                          Q_ARG(int, imageBlock.position())));
+        QVERIFY(QMetaObject::invokeMethod(editor, "positionToRectangle",
+                                          Q_RETURN_ARG(QRectF, nextCaret),
+                                          Q_ARG(int, next.position())));
+        QVERIFY2(nextCaret.top() >= imageCaret.top() + MarkdownHighlighter::imageLineHeight - 1.0,
+                 qPrintable(QStringLiteral("visual gap %1").arg(nextCaret.top() - imageCaret.top())));
+
+        QQuickItem *decoration = nullptr;
+        QTRY_VERIFY((decoration = findNamedItem(window.data(), QStringLiteral("imageDecoration"))));
+        QCOMPARE(decoration->height(), MarkdownHighlighter::imageLineHeight);
+        QQuickItem *rendered = nullptr;
+        QTRY_VERIFY((rendered = findNamedItem(window.data(), QStringLiteral("renderedImage"))));
+        QVERIFY2(rendered->height() > 96.0 && rendered->height() <= MarkdownHighlighter::imageLineHeight,
+                 qPrintable(QStringLiteral("image height %1").arg(rendered->height())));
+        QCOMPARE(editor->property("text").toString(), text);
+    }
+
+    void fencedMarkdownStaysLiteral() {
+        Backend backend;
+        QQmlEngine engine;
+        QObject *editor = nullptr;
+        QScopedPointer<QObject> window(openEditor(backend, engine, &editor));
+        QVERIFY(editor);
+
+        const QString text = QStringLiteral(
+            "- [ ] live\n"
+            "\n"
+            "```\n"
+            "- [ ] hidden\n"
+            "| a | b |\n"
+            "| --- | --- |\n"
+            "| c | d |\n"
+            "---\n"
+            "```\n"
+            "\n"
+            "- [x] after\n");
+        editor->setProperty("text", text);
+        editor->setProperty("cursorPosition", text.indexOf(QStringLiteral("\n\n")) + 1);
+        QCoreApplication::processEvents();
+
+        const int hiddenBox = text.indexOf(QStringLiteral("- [ ] hidden")) + 2;
+        QVERIFY(backend.taskAt(hiddenBox).isEmpty());
+        QVERIFY(!backend.toggleTask(hiddenBox));
+        QCOMPARE(editor->property("text").toString(), text);
+        QVERIFY(findNamedItem(window.data(), QStringLiteral("tableFrame")) == nullptr);
+        QVERIFY(findNamedItem(window.data(), QStringLiteral("horizontalRule")) == nullptr);
+
+        int taskBoxes = 0;
+        for (const QVariant &entry : backend.decorations()) {
+            const QVariantMap map = entry.toMap();
+            const QString kind = map.value(QStringLiteral("kind")).toString();
+            QVERIFY(kind != QStringLiteral("table"));
+            QVERIFY(kind != QStringLiteral("rule"));
+            if (kind == QStringLiteral("task")) {
+                ++taskBoxes;
+                QVERIFY(map.value(QStringLiteral("start")).toInt() != hiddenBox);
+            }
+        }
+        QCOMPARE(taskBoxes, 2);
+
+        const int liveBox = text.indexOf(QStringLiteral("[ ]"));
+        QVERIFY(backend.toggleTask(liveBox));
+        QCoreApplication::processEvents();
+        QVERIFY(editor->property("text").toString().contains(QStringLiteral("- [x] live")));
+        QVERIFY(editor->property("text").toString().contains(QStringLiteral("- [ ] hidden")));
+        QVERIFY(QMetaObject::invokeMethod(editor, "undo"));
+        QCoreApplication::processEvents();
+        QCOMPARE(editor->property("text").toString(), text);
+    }
+
+    void caretAndSelectionRevealOnlyTheActiveMarkup() {
+        Backend backend;
+        QQmlEngine engine;
+        QObject *editor = nullptr;
+        QScopedPointer<QObject> window(openEditor(backend, engine, &editor));
+        QVERIFY(editor);
+
+        const QString text = QStringLiteral(
+            "# Title\n"
+            "\n"
+            "see <https://example.com/auto> now\n"
+            "\n"
+            "- [ ] task\n"
+            "\n"
+            "> one\n"
+            "> > two\n"
+            "\n"
+            "```cpp\n"
+            "int x;\n"
+            "```\n");
+        editor->setProperty("text", text);
+        editor->setProperty("cursorPosition", 0);
+        QCoreApplication::processEvents();
+
+        QTextDocument *document = editorDocument(editor);
+        QVERIFY(document);
+        const auto formatAt = [document](int position) {
+            const QTextBlock block = document->findBlock(position);
+            const int local = position - block.position();
+            QTextCharFormat format;
+            const auto ranges = block.layout() ? block.layout()->formats() : QList<QTextLayout::FormatRange>{};
+            for (const QTextLayout::FormatRange &range : ranges) {
+                if (local >= range.start && local < range.start + range.length)
+                    format = range.format;
+            }
+            return format;
+        };
+
+        const int bracket = text.indexOf(QLatin1Char('<'));
+        editor->setProperty("cursorPosition", 0);
+        QCoreApplication::processEvents();
+        QCOMPARE(formatAt(bracket).fontPointSize(), 1.0);
+        editor->setProperty("cursorPosition", bracket);
+        QCoreApplication::processEvents();
+        QVERIFY(qFuzzyIsNull(formatAt(bracket).fontPointSize())
+                || formatAt(bracket).fontPointSize() > 8);
+
+        const int taskBox = text.indexOf(QStringLiteral("[ ]"));
+        editor->setProperty("cursorPosition", taskBox);
+        QCoreApplication::processEvents();
+        QTRY_VERIFY(findNamedItem(window.data(), QStringLiteral("taskCheckbox")) == nullptr);
+        editor->setProperty("cursorPosition", 0);
+        QCoreApplication::processEvents();
+        QTRY_VERIFY(findNamedItem(window.data(), QStringLiteral("taskCheckbox")));
+
+        editor->setProperty("cursorPosition", 0);
+        QCoreApplication::processEvents();
+        QCOMPARE(findNamedItems(window.data(), QStringLiteral("quoteBar")).size(), 3);
+        const int quoteMark = text.indexOf(QStringLiteral("> one"));
+        QCOMPARE(formatAt(quoteMark).fontPointSize(), 1.0);
+        const int nested = text.indexOf(QStringLiteral("> > two"));
+        editor->setProperty("cursorPosition", nested);
+        QCoreApplication::processEvents();
+        QTRY_VERIFY(findNamedItems(window.data(), QStringLiteral("quoteBar")).isEmpty());
+        QVERIFY(qFuzzyIsNull(formatAt(quoteMark).fontPointSize())
+                || formatAt(quoteMark).fontPointSize() > 8);
+
+        const int codeBody = text.indexOf(QStringLiteral("int x;"));
+        editor->setProperty("cursorPosition", 0);
+        QCoreApplication::processEvents();
+        QCOMPARE(document->findBlock(codeBody).blockFormat().leftMargin(),
+                 MarkdownHighlighter::codeBlockInset);
+        QQuickItem *language = nullptr;
+        QTRY_VERIFY((language = findNamedItem(window.data(), QStringLiteral("codeLanguage"))));
+        QCOMPARE(language->property("text").toString(), QStringLiteral("cpp"));
+        editor->setProperty("cursorPosition", codeBody);
+        QCoreApplication::processEvents();
+        QTRY_VERIFY(findNamedItem(window.data(), QStringLiteral("codeLanguage")) == nullptr);
+        QCOMPARE(document->findBlock(codeBody).blockFormat().leftMargin(),
+                 MarkdownHighlighter::codeBlockInset);
+
+        const int body = text.indexOf(QStringLiteral("see"));
+        QVERIFY(QMetaObject::invokeMethod(editor, "select", Q_ARG(int, 0), Q_ARG(int, body + 2)));
+        QCoreApplication::processEvents();
+        QVERIFY(qFuzzyIsNull(formatAt(0).fontPointSize()) || formatAt(0).fontPointSize() > 8);
+        editor->setProperty("cursorPosition", body);
+        QCoreApplication::processEvents();
+        QCOMPARE(formatAt(0).fontPointSize(), 1.0);
+        QCOMPARE(editor->property("text").toString(), text);
+    }
+
+    void movingTheCaretDoesNotPushUndo() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path = directory.filePath(QStringLiteral("note.md"));
+        QFile note(path);
+        QVERIFY(note.open(QIODevice::WriteOnly | QIODevice::Text));
+        note.write("hello\nworld\n");
+        note.close();
+
+        Backend backend;
+        QQmlEngine engine;
+        QObject *editor = nullptr;
+        QScopedPointer<QObject> window(openEditor(backend, engine, &editor));
+        QVERIFY(editor);
+        backend.open(QUrl::fromLocalFile(path));
+        QCoreApplication::processEvents();
+        QTextDocument *document = editorDocument(editor);
+        QVERIFY(document);
+        QVERIFY(!document->isUndoAvailable());
+        editor->setProperty("cursorPosition", 4);
+        QCoreApplication::processEvents();
+        QVERIFY(!document->isUndoAvailable());
+        QVERIFY(QMetaObject::invokeMethod(editor, "select", Q_ARG(int, 0), Q_ARG(int, 5)));
+        QCoreApplication::processEvents();
+        QVERIFY(!document->isUndoAvailable());
+        QCOMPARE(editor->property("text").toString(), QStringLiteral("hello\nworld\n"));
+    }
+
+    void mailtoDropsEveryQueryExceptSubjectAndBody() {
+        Backend backend;
+        QQmlEngine engine;
+        QObject *editor = nullptr;
+        QScopedPointer<QObject> window(openEditor(backend, engine, &editor));
+        QVERIFY(editor);
+
+        const QString text = QStringLiteral(
+            "[x](mailto:a@evil?attach=/home/u/.ssh/id_rsa)\n"
+            "[y](mailto:a@evil?Subject=Hi&CC=spy@evil&Bcc=other@evil&Body=Yo&attach=/tmp/x)\n");
+        editor->setProperty("text", text);
+        editor->setProperty("cursorPosition", 0);
+        QCoreApplication::processEvents();
+
+        const int attachLink = text.indexOf(QStringLiteral("[x]"));
+        QCOMPARE(backend.linkAt(attachLink), QStringLiteral("mailto:a@evil"));
+        const QString kept = backend.linkAt(text.indexOf(QStringLiteral("[y]")));
+        QVERIFY(kept.startsWith(QStringLiteral("mailto:a@evil")));
+        QVERIFY(!kept.contains(QStringLiteral("attach"), Qt::CaseInsensitive));
+        QVERIFY(!kept.contains(QStringLiteral("ssh")));
+        QVERIFY(!kept.contains(QStringLiteral("cc="), Qt::CaseInsensitive));
+        QVERIFY(!kept.contains(QStringLiteral("bcc"), Qt::CaseInsensitive));
+        QVERIFY(kept.contains(QStringLiteral("subject=Hi"), Qt::CaseInsensitive));
+        QVERIFY(kept.contains(QStringLiteral("body=Yo"), Qt::CaseInsensitive));
+
+        QSignalSpy activated(window.data(), SIGNAL(linkActivated(QString)));
+        QVariant opened;
+        QVERIFY(QMetaObject::invokeMethod(window.data(), "openLinkAt",
+                                          Q_RETURN_ARG(QVariant, opened),
+                                          Q_ARG(QVariant, attachLink)));
+        QVERIFY(opened.toBool());
+        QCOMPARE(activated.count(), 1);
+        const QString sent = activated.takeFirst().constFirst().toString();
+        QCOMPARE(sent, QStringLiteral("mailto:a@evil"));
+        QVERIFY(backend.openExternalUrl(QUrl(QStringLiteral(
+            "mailto:a@evil?attach=/home/u/.ssh/id_rsa&subject=Hi"))));
+        QCOMPARE(editor->property("text").toString(), text);
+    }
+
+    void statusAndUnsavedPromptStayPlainText() {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        // A closed <b></b> pair is rejected by this environment's path filter.
+        // An opening tag is enough for Qt AutoText to treat the name as HTML.
+        const QString path = directory.filePath(QStringLiteral("<b>x.md"));
+        QFile note(path);
+        QVERIFY(note.open(QIODevice::WriteOnly | QIODevice::Text));
+        note.write("# hello\n");
+        note.close();
+
+        Backend backend;
+        QQmlEngine engine;
+        QObject *editor = nullptr;
+        QScopedPointer<QObject> window(openEditor(backend, engine, &editor));
+        QVERIFY(editor);
+        backend.open(QUrl::fromLocalFile(path));
+        QCoreApplication::processEvents();
+
+        QObject *status = window->findChild<QObject *>(QStringLiteral("statusLabel"));
+        QVERIFY(status);
+        QCOMPARE(status->property("textFormat").toInt(), int(Qt::PlainText));
+        QVERIFY(status->property("text").toString().contains(QStringLiteral("<b>x.md")));
+        QVERIFY(status->property("text").toString().contains(QStringLiteral("<b>")));
+
+        QObject *prompt = window->findChild<QObject *>(QStringLiteral("unsavedPrompt"));
+        QVERIFY(prompt);
+        QCOMPARE(prompt->property("textFormat").toInt(), int(Qt::PlainText));
+        QObject *dialog = window->findChild<QObject *>(QStringLiteral("unsavedChangesDialog"));
+        QVERIFY(dialog);
+        dialog->setProperty("fileName", QStringLiteral("<b>x</b>.md"));
+        QVERIFY(prompt->property("text").toString().contains(QStringLiteral("<b>x</b>.md")));
+        QCOMPARE(editor->property("text").toString(), QStringLiteral("# hello\n"));
     }
 
 private:

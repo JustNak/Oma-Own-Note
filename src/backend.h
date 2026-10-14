@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QObject>
 #include <QPointer>
 #include <QByteArray>
@@ -86,6 +87,7 @@ public:
     Q_INVOKABLE QVariantList hiddenRangesAt(int position) const;
     Q_INVOKABLE void setSearchHighlight(const QString &query, int currentMatchStart);
     Q_INVOKABLE void setEditingPosition(int position);
+    Q_INVOKABLE void setEditingRange(int cursor, int selectionStart, int selectionEnd);
     Q_INVOKABLE QString linkAt(int position) const;
     Q_INVOKABLE QVariantMap taskAt(int position) const;
     Q_INVOKABLE bool toggleTask(int position);
@@ -171,5 +173,8 @@ private:
     QString m_themeSelection;
     QFileSystemWatcher m_themeWatcher;
     int m_editingPosition = -1;
+    int m_selectionStart = -1;
+    int m_selectionEnd = -1;
     QVariantList m_decorations;
+    mutable QHash<QString, QVariantMap> m_imageClassCache;
 };

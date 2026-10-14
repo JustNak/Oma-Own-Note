@@ -110,13 +110,18 @@ Item {
                 id: imageItem
                 objectName: overlay.modelData.kind === "image" ? "imageDecoration" : ""
                 visible: !chrome.underlay && overlay.modelData.kind === "image"
+                readonly property int imageCap: 160
                 readonly property rect startRect: chrome.rectAt(overlay.modelData.start)
                 readonly property bool remoteAllowed: overlay.modelData.mode === "remote"
                         && chrome.consentedRemote[overlay.modelData.remoteUrl] === true
+                readonly property int labelSize: chrome.editorItem
+                        ? Math.max(11, Math.round(chrome.editorItem.font.pixelSize * 0.65))
+                        : 13
                 x: startRect.x
                 y: startRect.y
                 width: Math.max(160, image.paintedWidth, placeholder.implicitWidth + 16)
-                height: Math.max(28, startRect.height, image.paintedHeight)
+                height: imageCap
+                clip: true
 
                 Image {
                     id: image
@@ -135,9 +140,10 @@ Item {
                             return overlay.modelData.remoteUrl || ""
                         return ""
                     }
-                    sourceSize.height: 96
+                    sourceSize.height: imageItem.imageCap
                     width: source === "" ? 0 : Math.min(320, sourceSize.width > 0 ? sourceSize.width : 160)
-                    height: source === "" ? 0 : Math.min(96, sourceSize.height > 0 ? sourceSize.height : 72)
+                    height: source === "" ? 0 : Math.min(imageItem.imageCap,
+                            sourceSize.height > 0 ? sourceSize.height : imageItem.imageCap)
                 }
 
                 Rectangle {
@@ -148,7 +154,7 @@ Item {
                     visible: imageItem.visible && overlay.modelData.mode !== "local"
                             && !imageItem.remoteAllowed
                     width: Math.max(168, label.implicitWidth + 24)
-                    height: 32
+                    height: Math.max(label.implicitHeight + 12, 28)
                     radius: 2
                     color: chrome.headerFill
                     border.width: activeFocus ? 2 : 1
@@ -159,10 +165,11 @@ Item {
 
                     Text {
                         id: label
+                        objectName: placeholder.visible ? "imageActionLabel" : ""
                         anchors.centerIn: parent
                         color: chrome.textColor
                         font.family: "iA Writer Mono S"
-                        font.pixelSize: 13
+                        font.pixelSize: imageItem.labelSize
                         text: overlay.modelData.mode === "remote" ? "Load image"
                                 : overlay.modelData.mode === "missing" ? "Missing image"
                                 : "Image blocked"
@@ -239,16 +246,20 @@ Item {
                     border.color: chrome.ruleColor
                 }
 
-                Rectangle {
-                    visible: !chrome.underlay && overlay.modelData.headerEnd >= 0
-                    x: 0
-                    y: {
-                        var header = chrome.rectAt(overlay.modelData.headerEnd)
-                        return Math.max(0, header.y + header.height - parent.y)
+                Repeater {
+                    model: chrome.underlay ? [] : (overlay.modelData.rows || [])
+                    delegate: Rectangle {
+                        objectName: !chrome.underlay && index > 0 ? "tableRowRule" : ""
+                        required property int index
+                        required property var modelData
+                        readonly property rect rowRect: chrome.rectAt(modelData)
+                        visible: index > 0
+                        x: 0
+                        y: Math.max(0, rowRect.y - tableItem.y)
+                        width: parent.width
+                        height: 1
+                        color: chrome.ruleColor
                     }
-                    width: parent.width
-                    height: 1
-                    color: chrome.ruleColor
                 }
 
                 Repeater {
@@ -263,6 +274,37 @@ Item {
                         color: chrome.ruleColor
                     }
                 }
+            }
+
+            Repeater {
+                model: !chrome.underlay && overlay.modelData.kind === "quote"
+                        ? (overlay.modelData.bars || []) : []
+                delegate: Rectangle {
+                    objectName: "quoteBar"
+                    required property var modelData
+                    readonly property rect barRect: chrome.rectAt(modelData)
+                    x: barRect.x
+                    y: barRect.y
+                    width: 2
+                    height: Math.max(1, barRect.height)
+                    color: chrome.mutedColor
+                }
+            }
+
+            Text {
+                objectName: !chrome.underlay && overlay.modelData.kind === "code"
+                        && overlay.modelData.showLabel === true
+                        && overlay.modelData.language ? "codeLanguage" : ""
+                visible: objectName === "codeLanguage"
+                readonly property rect startRect: chrome.rectAt(overlay.modelData.start)
+                x: 8
+                y: startRect.y - Math.max(12, font.pixelSize + 2)
+                color: chrome.mutedColor
+                font.family: "iA Writer Mono S"
+                font.pixelSize: chrome.editorItem
+                        ? Math.max(11, Math.round(chrome.editorItem.font.pixelSize * 0.65))
+                        : 13
+                text: overlay.modelData.language || ""
             }
 
             Item {

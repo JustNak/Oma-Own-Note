@@ -742,10 +742,13 @@ ApplicationWindow {
                     color: win.strongTextColor
                 }
                 onCursorRectangleChanged: editorFlick.ensureCursorVisible()
-                onCursorPositionChanged: {
-                    backend.setEditingPosition(cursorPosition)
+                function syncEditingRange() {
+                    backend.setEditingRange(cursorPosition, selectionStart, selectionEnd)
                     win.layoutEpoch++
                 }
+                onCursorPositionChanged: syncEditingRange()
+                onSelectionStartChanged: syncEditingRange()
+                onSelectionEndChanged: syncEditingRange()
                 onWidthChanged: win.layoutEpoch++
 
                 TapHandler {
@@ -1026,7 +1029,7 @@ ApplicationWindow {
 
                 Component.onCompleted: {
                     backend.attachDocument(textDocument);
-                    backend.setEditingPosition(cursorPosition);
+                    backend.setEditingRange(cursorPosition, selectionStart, selectionEnd);
                     forceActiveFocus();
                 }
 
@@ -1074,7 +1077,9 @@ ApplicationWindow {
             }
 
             Label {
+                objectName: "statusLabel"
                 text: backend.status
+                textFormat: Text.PlainText
                 color: win.mutedColor
                 font.family: "iA Writer Mono S"
                 font.pixelSize: win.scaledSize(11)

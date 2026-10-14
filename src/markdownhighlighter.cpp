@@ -5,6 +5,9 @@
 #include <QFontMetricsF>
 #include <QSet>
 #include <QTextDocument>
+#include <QTextLayout>
+
+#include <limits>
 
 namespace {
 
@@ -122,11 +125,26 @@ bool mermaidComments(const QString &language) {
     return language.compare(QLatin1String("mermaid"), Qt::CaseInsensitive) == 0;
 }
 
-int blockNumberFor(const QTextDocument *document, int position) {
-    if (!document || position < 0)
-        return -1;
-    const QTextBlock block = document->findBlock(qBound(0, position, document->characterCount() - 1));
-    return block.isValid() ? block.blockNumber() : -1;
+qreal measuredTextWidth(const QString &text, const QFont &font) {
+    if (text.isEmpty())
+        return 0;
+    QTextLayout layout(text, font);
+    layout.beginLayout();
+    QTextLine line = layout.createLine();
+    if (line.isValid())
+        line.setLineWidth(1.0e6);
+    layout.endLayout();
+    return line.isValid() ? line.naturalTextWidth() : 0;
+}
+
+QString languageOfFenceLine(const QString &text) {
+    QString language = text.trimmed();
+    if (language.startsWith(QLatin1String("```")))
+        language = language.mid(3).trimmed();
+    const int space = language.indexOf(QRegularExpression(QStringLiteral("\\s")));
+    if (space >= 0)
+        language = language.left(space);
+    return language;
 }
 
 QString destinationUrl(const QString &raw) {
@@ -191,12 +209,149 @@ void MarkdownHighlighter::setSearch(const QString &query, int currentMatchStart)
 }
 
 void MarkdownHighlighter::setEditingPosition(int position) {
-    if (m_editingPosition == position)
-        return;
-    const int previous = blockNumberFor(document(), m_editingPosition);
-    m_editingPosition = position;
-    if (previous != blockNumberFor(document(), position))
+    setEditingRange(position, position, position);
+}
+
+bool MarkdownHighlighter::setEditingRange(int cursor, int selectionStart, int selectionEnd) {
+    if (m_editingPosition == cursor && m_selectionStart == selectionStart
+            && m_selectionEnd == selectionEnd)
+        return false;
+    const QSet<int> before = activeBlocks();
+    m_editingPosition = cursor;
+    m_selectionStart = selectionStart;
+    m_selectionEnd = selectionEnd;
+    const QSet<int> after = activeBlocks();
+    if (before == after || !document())
+        return false;
+    QSet<int> dirty = before;
+    dirty.unite(after);
+    if (dirty.contains(-1) || dirty.size() > 200
+            || dirty.size() * 2 > document()->blockCount()) {
         rehighlight();
+        return true;
+    }
+    for (int number : dirty) {
+        const QTextBlock block = document()->findBlockByNumber(number);
+        if (block.isValid())
+            rehighlightBlock(block);
+    }
+    return true;
+}
+
+void MarkdownHighlighter::ensureStructure() const {
+    if (!document())
+        return;
+    const int revision = document()->revision();
+    if (revision == m_structureRevision)
+        return;
+    m_structureRevision = revision;
+    m_fences.clear();
+    m_columnCache.clear();
+    bool open = false;
+    FenceInterval current;
+    for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
+        if (!isFenceMarker(block.text()))
+            continue;
+        if (!open) {
+            current.start = block.blockNumber();
+            current.end = -1;
+            current.language = languageOfFenceLine(block.text());
+            open = true;
+            continue;
+        }
+        current.end = block.blockNumber();
+        m_fences.append(current);
+        open = false;
+    }
+    if (open)
+        m_fences.append(current);
+}
+
+bool MarkdownHighlighter::blockInFence(const QTextBlock &block) const {
+    if (!block.isValid())
+        return false;
+    ensureStructure();
+    const int number = block.blockNumber();
+    for (const FenceInterval &fence : m_fences) {
+        const int end = fence.end < 0 ? std::numeric_limits<int>::max() : fence.end;
+        if (number >= fence.start && number <= end)
+            return true;
+    }
+    return false;
+}
+
+QString MarkdownHighlighter::codeLanguage(const QTextBlock &opening) const {
+    if (!opening.isValid())
+        return {};
+    ensureStructure();
+    for (const FenceInterval &fence : m_fences) {
+        if (fence.start == opening.blockNumber())
+            return fence.language;
+    }
+    return languageOfFenceLine(opening.text());
+}
+
+QSet<int> MarkdownHighlighter::activeBlocks() const {
+    QSet<int> blocks;
+    if (!document() || m_editingPosition < 0)
+        return blocks;
+    int from = m_editingPosition;
+    int to = m_editingPosition;
+    if (m_selectionStart >= 0 && m_selectionEnd >= 0) {
+        from = qMin(from, qMin(m_selectionStart, m_selectionEnd));
+        to = qMax(to, qMax(m_selectionStart, m_selectionEnd));
+    }
+    if (to - from > 8000) {
+        blocks.insert(-1);
+        return blocks;
+    }
+    for (QTextBlock block = document()->findBlock(qMax(0, from));
+         block.isValid() && block.position() <= to; block = block.next())
+        addActiveGroup(blocks, block);
+    return blocks;
+}
+
+void MarkdownHighlighter::addActiveGroup(QSet<int> &blocks, const QTextBlock &block) const {
+    if (!block.isValid())
+        return;
+    if (blockInFence(block)) {
+        ensureStructure();
+        const int number = block.blockNumber();
+        for (const FenceInterval &fence : m_fences) {
+            const int end = fence.end < 0 ? std::numeric_limits<int>::max() : fence.end;
+            if (number < fence.start || number > end)
+                continue;
+            for (QTextBlock row = document()->findBlockByNumber(fence.start);
+                 row.isValid() && (fence.end < 0 || row.blockNumber() <= fence.end);
+                 row = row.next())
+                blocks.insert(row.blockNumber());
+            return;
+        }
+    }
+    if (isTableRow(block.text())) {
+        QTextBlock start = block;
+        while (start.previous().isValid() && isTableRow(start.previous().text())
+               && !blockInFence(start.previous()))
+            start = start.previous();
+        for (QTextBlock row = start; row.isValid() && isTableRow(row.text()) && !blockInFence(row);
+             row = row.next())
+            blocks.insert(row.blockNumber());
+        return;
+    }
+    const QString trimmed = block.text().trimmed();
+    if (trimmed.startsWith(QLatin1Char('>'))) {
+        QTextBlock start = block;
+        while (start.previous().isValid()
+               && start.previous().text().trimmed().startsWith(QLatin1Char('>'))
+               && !blockInFence(start.previous()))
+            start = start.previous();
+        for (QTextBlock row = start;
+             row.isValid() && row.text().trimmed().startsWith(QLatin1Char('>')) && !blockInFence(row);
+             row = row.next())
+            blocks.insert(row.blockNumber());
+        return;
+    }
+    blocks.insert(block.blockNumber());
 }
 
 void MarkdownHighlighter::rebuildFormats() {
@@ -316,12 +471,22 @@ void MarkdownHighlighter::rebuildFormats() {
     m_numberFormat.setFontFixedPitch(true);
 }
 
-bool MarkdownHighlighter::cursorInside(const QTextBlock &block) const {
+bool MarkdownHighlighter::rangeOverlaps(const QTextBlock &block) const {
     if (m_editingPosition < 0 || !block.isValid())
         return false;
+    int from = m_editingPosition;
+    int to = m_editingPosition;
+    if (m_selectionStart >= 0 && m_selectionEnd >= 0) {
+        from = qMin(from, qMin(m_selectionStart, m_selectionEnd));
+        to = qMax(to, qMax(m_selectionStart, m_selectionEnd));
+    }
     const int start = block.position();
-    const int end = start + block.length() - 1;
-    return m_editingPosition >= start && m_editingPosition <= end;
+    const int end = start + qMax(0, block.length() - 1);
+    return to >= start && from <= end;
+}
+
+bool MarkdownHighlighter::cursorInside(const QTextBlock &block) const {
+    return rangeOverlaps(block);
 }
 
 bool MarkdownHighlighter::revealLineSyntax() const {
@@ -331,35 +496,22 @@ bool MarkdownHighlighter::revealLineSyntax() const {
 }
 
 bool MarkdownHighlighter::cursorInsideFence(const QTextBlock &block) const {
-    if (m_editingPosition < 0 || !block.isValid() || !block.document())
+    if (m_editingPosition < 0 || !block.isValid())
         return true;
-
-    bool inFence = false;
-    QTextBlock opening;
-    for (QTextBlock row = block.document()->begin(); row.isValid(); row = row.next()) {
-        if (!row.text().trimmed().startsWith(QLatin1String("```")))
+    if (!blockInFence(block))
+        return false;
+    ensureStructure();
+    const int number = block.blockNumber();
+    for (const FenceInterval &fence : m_fences) {
+        const int end = fence.end < 0 ? std::numeric_limits<int>::max() : fence.end;
+        if (number < fence.start || number > end)
             continue;
-        if (!inFence) {
-            opening = row;
-            inFence = true;
-            continue;
-        }
-        if (block.position() >= opening.position() && block.position() <= row.position()) {
-            for (QTextBlock inner = opening; inner.isValid(); inner = inner.next()) {
-                if (cursorInside(inner))
-                    return true;
-                if (inner == row)
-                    break;
-            }
-            return false;
-        }
-        inFence = false;
-    }
-    if (inFence && block.position() >= opening.position()) {
-        for (QTextBlock inner = opening; inner.isValid(); inner = inner.next()) {
-            if (cursorInside(inner))
+        for (QTextBlock row = document()->findBlockByNumber(fence.start);
+             row.isValid() && (fence.end < 0 || row.blockNumber() <= fence.end); row = row.next()) {
+            if (rangeOverlaps(row))
                 return true;
         }
+        return false;
     }
     return false;
 }
@@ -379,23 +531,26 @@ bool MarkdownHighlighter::tableIsRaw(const QTextBlock &block) const {
         return true;
 
     QTextBlock start = block;
-    while (start.previous().isValid() && isTableRow(start.previous().text()))
+    while (start.previous().isValid() && isTableRow(start.previous().text())
+           && !blockInFence(start.previous()))
         start = start.previous();
-    for (QTextBlock row = start; row.isValid() && isTableRow(row.text()); row = row.next()) {
-        if (cursorInside(row))
+    for (QTextBlock row = start; row.isValid() && isTableRow(row.text()) && !blockInFence(row);
+         row = row.next()) {
+        if (rangeOverlaps(row))
             return true;
     }
     return false;
 }
 
+QTextCharFormat MarkdownHighlighter::invisibleMarkFormat() const {
+    QTextCharFormat format;
+    format.setForeground(QColor(0, 0, 0, 0));
+    format.setFontPointSize(1.0);
+    return format;
+}
+
 QString MarkdownHighlighter::fenceLanguage(const QTextBlock &opening) const {
-    QString language = opening.text().trimmed();
-    if (language.startsWith(QLatin1String("```")))
-        language = language.mid(3).trimmed();
-    const int space = language.indexOf(QRegularExpression(QStringLiteral("\\s")));
-    if (space >= 0)
-        language = language.left(space);
-    return language;
+    return languageOfFenceLine(opening.text());
 }
 
 void MarkdownHighlighter::highlightBlock(const QString &text) {
@@ -630,7 +785,17 @@ void MarkdownHighlighter::highlightMarkers(const QString &text) {
                     }
                 }
             }
-            setFormat(0, quote.capturedLength(1), reveal ? m_markerFormat : m_hiddenMarkerFormat);
+            if (reveal) {
+                setFormat(0, quote.capturedLength(1), m_markerFormat);
+            } else {
+                const QString marker = quote.captured(1);
+                const int markerStart = int(quote.capturedStart(1));
+                const QTextCharFormat hidden = invisibleMarkFormat();
+                for (int index = 0; index < marker.size(); ++index) {
+                    const qreal advance = marker.at(index) == QLatin1Char('>') ? quoteBarSlot : 0;
+                    setAdvance(text, markerStart + index, advance, hidden);
+                }
+            }
             setFormat(quote.capturedStart(2), quote.capturedLength(2), m_quoteFormat);
         }
     }
@@ -694,6 +859,10 @@ bool MarkdownHighlighter::isStandaloneImage(const QString &text) {
         && spans.first().length == trimmed.size();
 }
 
+bool MarkdownHighlighter::isFenceMarker(const QString &text) {
+    return text.trimmed().startsWith(QLatin1String("```"));
+}
+
 bool MarkdownHighlighter::isFencedCodeLine(const QTextBlock &block) {
     if (!block.isValid())
         return false;
@@ -712,16 +881,27 @@ MarkdownHighlighter::TableLine MarkdownHighlighter::parseTableLine(const QString
         return line;
 
     line.kind = isTableSeparator(text) ? TableLine::Kind::Separator : TableLine::Kind::Body;
+    bool inCode = false;
     int cellStart = 0;
-    for (int i = 0; i <= text.length(); ++i) {
-        if (i == text.length() || text.at(i) == QLatin1Char('|')) {
-            if (i > cellStart)
-                line.cells.append(Span{cellStart, i - cellStart});
-            if (i < text.length())
-                line.hidden.append(Span{i, 1});
-            cellStart = i + 1;
+    for (int index = 0; index < text.length(); ++index) {
+        const QChar character = text.at(index);
+        if (!inCode && character == QLatin1Char('\\') && index + 1 < text.length()) {
+            ++index;
+            continue;
+        }
+        if (character == QLatin1Char('`')) {
+            inCode = !inCode;
+            continue;
+        }
+        if (!inCode && character == QLatin1Char('|')) {
+            if (index > cellStart)
+                line.cells.append(Span{cellStart, index - cellStart});
+            line.hidden.append(Span{index, 1});
+            cellStart = index + 1;
         }
     }
+    if (cellStart < text.length())
+        line.cells.append(Span{cellStart, int(text.length()) - cellStart});
     if (line.kind == TableLine::Kind::Separator)
         line.hidden = {Span{0, int(text.length())}};
     return line;
@@ -729,11 +909,17 @@ MarkdownHighlighter::TableLine MarkdownHighlighter::parseTableLine(const QString
 
 QVector<MarkdownHighlighter::Column> MarkdownHighlighter::columnsForTable(const QTextBlock &block) const {
     QTextBlock start = block;
-    while (start.previous().isValid() && isTableRow(start.previous().text()))
+    while (start.previous().isValid() && isTableRow(start.previous().text())
+           && !blockInFence(start.previous()))
         start = start.previous();
+    ensureStructure();
+    const auto cached = m_columnCache.constFind(start.blockNumber());
+    if (cached != m_columnCache.constEnd())
+        return cached.value();
 
     QVector<Column> columns;
-    for (QTextBlock row = start; row.isValid() && isTableRow(row.text()); row = row.next()) {
+    for (QTextBlock row = start; row.isValid() && isTableRow(row.text()) && !blockInFence(row);
+         row = row.next()) {
         const TableLine line = parseTableLine(row.text());
         if (columns.size() < line.cells.size())
             columns.resize(line.cells.size());
@@ -756,13 +942,15 @@ QVector<MarkdownHighlighter::Column> MarkdownHighlighter::columnsForTable(const 
         QFont font = document() ? document()->defaultFont() : QFont();
         if (header)
             font.setWeight(QFont::Bold);
-        const QFontMetricsF metrics(font);
         for (int index = 0; index < line.cells.size(); ++index) {
-            const QString cell = row.text().mid(line.cells.at(index).start,
-                                                line.cells.at(index).length).trimmed();
-            columns[index].width = qMax(columns[index].width, metrics.horizontalAdvance(cell));
+            QString cell = row.text().mid(line.cells.at(index).start,
+                                          line.cells.at(index).length).trimmed();
+            cell.replace(QStringLiteral("\\|"), QStringLiteral("|"));
+            columns[index].width = qMax(columns[index].width, measuredTextWidth(cell, font));
         }
     }
+    ensureStructure();
+    m_columnCache.insert(start.blockNumber(), columns);
     return columns;
 }
 
@@ -771,11 +959,15 @@ void MarkdownHighlighter::setAdvance(const QString &text, int index, qreal desir
     if (index < 0 || index >= text.size())
         return;
     QFont font = document() ? document()->defaultFont() : QFont();
+    if (base.fontPointSize() > 0)
+        font.setPointSizeF(base.fontPointSize());
+    else if (base.hasProperty(QTextFormat::FontPixelSize))
+        font.setPixelSize(base.intProperty(QTextFormat::FontPixelSize));
     if (base.fontWeight() != QFont::Normal)
         font.setWeight(static_cast<QFont::Weight>(base.fontWeight()));
     if (base.fontItalic())
         font.setItalic(true);
-    const qreal natural = QFontMetricsF(font).horizontalAdvance(text.at(index));
+    const qreal natural = measuredTextWidth(QString(text.at(index)), font);
     QTextCharFormat format = base;
     format.setFontLetterSpacingType(QFont::AbsoluteSpacing);
     format.setFontLetterSpacing(desired - natural);
@@ -798,7 +990,6 @@ void MarkdownHighlighter::highlightRenderedTable(const QString &text, const QVec
     QFont font = document() ? document()->defaultFont() : QFont();
     if (header)
         font.setWeight(QFont::Bold);
-    const QFontMetricsF metrics(font);
     const qreal gutter = qMax(1.0, QFontMetricsF(document() ? document()->defaultFont() : QFont())
                                        .horizontalAdvance(QLatin1Char(' ')));
     constexpr qreal border = 1.0;
@@ -813,7 +1004,9 @@ void MarkdownHighlighter::highlightRenderedTable(const QString &text, const QVec
         while (contentEnd > contentStart && text.at(contentEnd - 1).isSpace())
             --contentEnd;
         const int contentLength = contentEnd - contentStart;
-        const qreal contentWidth = metrics.horizontalAdvance(text.mid(contentStart, contentLength));
+        QString visible = text.mid(contentStart, contentLength);
+        visible.replace(QStringLiteral("\\|"), QStringLiteral("|"));
+        const qreal contentWidth = measuredTextWidth(visible, font);
         const qreal pad = qMax(0.0, columns.at(index).width - contentWidth);
         qreal leftExtra = 0;
         qreal rightExtra = pad;
@@ -828,12 +1021,19 @@ void MarkdownHighlighter::highlightRenderedTable(const QString &text, const QVec
         const qreal rightPad = gutter + rightExtra;
         const int lead = contentStart - cell.start;
         const int trail = cellEnd - contentEnd;
+        const bool lastCell = index + 1 == line.cells.size();
+        const bool hasTrailingPipe = line.hidden.size() > line.cells.size();
+        qreal missing = 0;
+        if (lastCell && !hasTrailingPipe) {
+            for (int extra = index + 1; extra < columns.size(); ++extra)
+                missing += border + gutter + columns.at(extra).width + gutter;
+        }
 
         qreal pipeAdvance = border;
         if (lead == 0)
             pipeAdvance += leftPad + (contentLength == 0 && trail == 0 ? rightPad : 0);
         if (index < line.hidden.size())
-            setAdvance(text, line.hidden.at(index).start, pipeAdvance, m_tableHairlineFormat);
+            setAdvance(text, line.hidden.at(index).start, pipeAdvance, invisibleMarkFormat());
 
         if (lead > 0) {
             const qreal leadingAdvance = leftPad
@@ -843,20 +1043,32 @@ void MarkdownHighlighter::highlightRenderedTable(const QString &text, const QVec
                 setAdvance(text, cell.start + space, 0, cellFormat);
         }
         for (int character = contentStart; character < contentEnd; ++character) {
-            qreal desired = metrics.horizontalAdvance(text.at(character));
+            const bool escapedPipe = text.at(character) == QLatin1Char('\\')
+                && character + 1 < contentEnd && text.at(character + 1) == QLatin1Char('|');
+            if (escapedPipe) {
+                setAdvance(text, character, 0, invisibleMarkFormat());
+                continue;
+            }
+            qreal desired = measuredTextWidth(QString(text.at(character)), font);
             if (trail == 0 && character == contentEnd - 1)
-                desired += rightPad;
+                desired += rightPad + missing;
             setAdvance(text, character, desired, cellFormat);
         }
         if (trail > 0) {
-            setAdvance(text, contentEnd, rightPad, cellFormat);
+            setAdvance(text, contentEnd, rightPad + (lastCell ? missing : 0), cellFormat);
             for (int space = 1; space < trail; ++space)
                 setAdvance(text, contentEnd + space, 0, cellFormat);
         }
     }
 
-    if (line.hidden.size() > line.cells.size())
-        setAdvance(text, line.hidden.constLast().start, border, m_tableHairlineFormat);
+    if (line.hidden.size() > line.cells.size()) {
+        qreal tail = border;
+        if (line.cells.size() < columns.size()) {
+            for (int extra = line.cells.size(); extra < columns.size(); ++extra)
+                tail += gutter + columns.at(extra).width + gutter + border;
+        }
+        setAdvance(text, line.hidden.constLast().start, tail, invisibleMarkFormat());
+    }
 }
 
 void MarkdownHighlighter::highlightTable(const QString &text) {
@@ -870,9 +1082,11 @@ void MarkdownHighlighter::highlightTable(const QString &text) {
     bool hasSeparator = line.kind == TableLine::Kind::Separator;
     if (!hasSeparator) {
         QTextBlock start = currentBlock();
-        while (start.previous().isValid() && isTableRow(start.previous().text()))
+        while (start.previous().isValid() && isTableRow(start.previous().text())
+               && !blockInFence(start.previous()))
             start = start.previous();
-        for (QTextBlock row = start; row.isValid() && isTableRow(row.text()); row = row.next()) {
+        for (QTextBlock row = start; row.isValid() && isTableRow(row.text()) && !blockInFence(row);
+             row = row.next()) {
             if (isTableSeparator(row.text())) {
                 hasSeparator = true;
                 break;
@@ -986,8 +1200,17 @@ void MarkdownHighlighter::highlightInline(const QString &text) {
                     covered = true;
             }
         }
-        if (!covered)
-            setFormat(start, length, m_linkFormat);
+        if (!covered) {
+            const bool bracketed = match.captured(0).startsWith(QLatin1Char('<'))
+                && match.captured(0).endsWith(QLatin1Char('>')) && length >= 2;
+            if (bracketed && hideMarkers) {
+                setFormat(start, 1, m_hiddenMarkerFormat);
+                setFormat(start + 1, length - 2, m_linkFormat);
+                setFormat(start + length - 1, 1, m_hiddenMarkerFormat);
+            } else {
+                setFormat(start, length, m_linkFormat);
+            }
+        }
     }
 }
 

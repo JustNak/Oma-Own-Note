@@ -3,6 +3,7 @@ import QtQuick.Controls
 
 Dialog {
     id: root
+    objectName: "unsavedChangesDialog"
 
     property string fileName: "Untitled.md"
     property bool darkMode: true
@@ -46,8 +47,10 @@ Dialog {
         }
 
         Label {
+            objectName: "unsavedPrompt"
             width: parent.width
             text: "Save changes to " + root.fileName + " before closing?"
+            textFormat: Text.PlainText
             color: root.textColor
             wrapMode: Text.Wrap
             font.family: "iA Writer Mono S"

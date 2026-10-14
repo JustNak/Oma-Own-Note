@@ -1,7 +1,9 @@
 #pragma once
 
+#include <QHash>
 #include <QList>
 #include <QRegularExpression>
+#include <QSet>
 #include <QSyntaxHighlighter>
 #include <QTextBlock>
 #include <QTextCharFormat>
@@ -17,8 +19,9 @@ public:
     void setColors(const QString &background, const QString &foreground, const QString &accent);
     void setSearch(const QString &query, int currentMatchStart);
     // -1 keeps the legacy raw table grid (pipes stay full width). A real caret
-    // position renders a table only while the caret is outside that table.
+    // position renders a table only while the caret and selection are outside it.
     void setEditingPosition(int position);
+    bool setEditingRange(int cursor, int selectionStart, int selectionEnd);
     int editingPosition() const { return m_editingPosition; }
 
     struct Span {
@@ -59,13 +62,18 @@ public:
     static bool isHorizontalRule(const QString &text);
     static bool isStandaloneImage(const QString &text);
     static bool isFencedCodeLine(const QTextBlock &block);
+    static bool isFenceMarker(const QString &text);
+    bool blockInFence(const QTextBlock &block) const;
+    QString codeLanguage(const QTextBlock &opening) const;
     static TableLine parseTableLine(const QString &text);
 
     // Light muted text on white. #aeb1b5 was about 2.15:1; #767676 clears WCAG AA.
     static QString mutedColor(bool darkMode);
 
     static constexpr qreal tableSeparatorLineHeight = 3;
-    static constexpr qreal imageLineHeight = 128;
+    static constexpr qreal imageLineHeight = 160;
+    static constexpr qreal codeBlockInset = 16;
+    static constexpr qreal quoteBarSlot = 10;
 
 protected:
     void highlightBlock(const QString &text) override;
@@ -85,15 +93,31 @@ private:
     void highlightRenderedTable(const QString &text, const QVector<Column> &columns, bool header);
     void setAdvance(const QString &text, int index, qreal desired, const QTextCharFormat &base);
     bool cursorInside(const QTextBlock &block) const;
+    bool rangeOverlaps(const QTextBlock &block) const;
     bool cursorInsideFence(const QTextBlock &block) const;
     bool revealLineSyntax() const;
     bool tableIsRaw(const QTextBlock &block) const;
     QTextCharFormat readableMarkerFormat() const;
+    QTextCharFormat invisibleMarkFormat() const;
     QVector<Column> columnsForTable(const QTextBlock &block) const;
     QString fenceLanguage(const QTextBlock &opening) const;
+    void ensureStructure() const;
+    QSet<int> activeBlocks() const;
+    void addActiveGroup(QSet<int> &blocks, const QTextBlock &block) const;
+
+    struct FenceInterval {
+        int start = 0;
+        int end = -1;
+        QString language;
+    };
 
     bool m_darkMode = true;
     int m_editingPosition = -1;
+    int m_selectionStart = -1;
+    int m_selectionEnd = -1;
+    mutable int m_structureRevision = -2;
+    mutable QVector<FenceInterval> m_fences;
+    mutable QHash<int, QVector<Column>> m_columnCache;
     QString m_customBackground;
     QString m_customForeground;
     QString m_customAccent;
