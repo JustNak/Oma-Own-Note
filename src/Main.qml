@@ -19,7 +19,7 @@ ApplicationWindow {
     readonly property color pageColor: backend.themeBackground
     readonly property color textColor: backend.themeForeground
     readonly property color strongTextColor: backend.themeForeground
-    readonly property color mutedColor: darkMode ? "#909191" : "#aeb1b5"
+    readonly property color mutedColor: backend.themeMuted
     readonly property color selectionFill: backend.themeSelection
     // The desktop's text size knob (GNOME's text-scaling-factor, which
     // `omarchy display text size` drives) anchored so its 12px default leaves
@@ -40,6 +40,18 @@ ApplicationWindow {
     property bool replaceOpen: false
     property bool awaitingPendingSave: false
     readonly property bool insertPaletteOpened: insertPalette.opened
+    property int layoutEpoch: 0
+
+    signal linkActivated(string url)
+
+    function openLinkAt(position) {
+        var url = backend.linkAt(position)
+        if (url === "")
+            return false
+        linkActivated(url)
+        backend.openExternalUrl(url)
+        return true
+    }
 
     Material.theme: darkMode ? Material.Dark : Material.Light
     Material.accent: backend.themeAccent
@@ -442,7 +454,7 @@ ApplicationWindow {
         standardButtons: Dialog.Close
         anchors.centerIn: parent
         contentItem: Label {
-            text: "Ctrl+S  Save\nCtrl+Shift+S  Save As\nCtrl+O  Open\nCtrl+N  New Window\nCtrl+F  Find\nCtrl+H  Find and Replace\nCtrl+Tab  Insert\nCtrl+B  Bold\nCtrl+I  Italic\nCtrl+K  Link\nCtrl+P  Print\nCtrl+=  Zoom In\nCtrl+-  Zoom Out\nCtrl+0  Reset Zoom\nF11 / Super+F  Fullscreen\nCtrl+?  Shortcuts"
+            text: "Ctrl+S  Save\nCtrl+Shift+S  Save As\nCtrl+O  Open\nCtrl+N  New Window\nCtrl+F  Find\nCtrl+H  Find and Replace\nCtrl+Tab  Insert\nCtrl+B  Bold\nCtrl+I  Italic\nCtrl+K  Link\nCtrl+P  Print\nCtrl+click  Open link\nCtrl+=  Zoom In\nCtrl+-  Zoom Out\nCtrl+0  Reset Zoom\nF11 / Super+F  Fullscreen\nCtrl+?  Shortcuts"
             lineHeight: 1.5
         }
     }
@@ -677,9 +689,26 @@ ApplicationWindow {
                 x: Math.round((editorFlick.width - win.editorWidth) / 2)
                 y: Math.max(42, Math.round(win.height * 0.05))
 
+            EditorChrome {
+                id: editorUnderlay
+                anchors.fill: editor
+                z: 0
+                underlay: true
+                editorItem: editor
+                decorations: backend.decorations
+                pageColor: win.pageColor
+                textColor: win.textColor
+                mutedColor: win.mutedColor
+                accentColor: backend.themeAccent
+                ruleColor: win.darkMode ? "#4f525a" : win.mutedColor
+                codeFill: win.darkMode ? "#1c1a1a" : "#f8f8f8"
+                layoutEpoch: win.layoutEpoch
+            }
+
             TextEdit {
                 id: editor
                 objectName: "sourceEditor"
+                z: 1
                 x: 0
                 // Inverse of canvas.scale so wrap still fills the 65-character
                 // column after zoom.
@@ -713,6 +742,22 @@ ApplicationWindow {
                     color: win.strongTextColor
                 }
                 onCursorRectangleChanged: editorFlick.ensureCursorVisible()
+                function syncEditingRange() {
+                    backend.setEditingRange(cursorPosition, selectionStart, selectionEnd)
+                    win.layoutEpoch++
+                }
+                onCursorPositionChanged: syncEditingRange()
+                onSelectionStartChanged: syncEditingRange()
+                onSelectionEndChanged: syncEditingRange()
+                onWidthChanged: win.layoutEpoch++
+
+                TapHandler {
+                    acceptedModifiers: Qt.ControlModifier
+                    onTapped: function(eventPoint) {
+                        var pos = editor.positionAt(eventPoint.position.x, eventPoint.position.y)
+                        win.openLinkAt(pos)
+                    }
+                }
 
                 function replaceSelectionWith(replacement) {
                     var start = Math.min(selectionStart, selectionEnd);
@@ -984,7 +1029,23 @@ ApplicationWindow {
 
                 Component.onCompleted: {
                     backend.attachDocument(textDocument);
+                    backend.setEditingRange(cursorPosition, selectionStart, selectionEnd);
                     forceActiveFocus();
+                }
+
+                EditorChrome {
+                    id: editorChrome
+                    anchors.fill: parent
+                    z: 2
+                    editorItem: editor
+                    decorations: backend.decorations
+                    pageColor: win.pageColor
+                    textColor: win.textColor
+                    mutedColor: win.mutedColor
+                    accentColor: backend.themeAccent
+                    ruleColor: win.darkMode ? "#4f525a" : win.mutedColor
+                    codeFill: win.darkMode ? "#1c1a1a" : "#f8f8f8"
+                    layoutEpoch: win.layoutEpoch
                 }
             }
             }
@@ -1016,7 +1077,9 @@ ApplicationWindow {
             }
 
             Label {
+                objectName: "statusLabel"
                 text: backend.status
+                textFormat: Text.PlainText
                 color: win.mutedColor
                 font.family: "iA Writer Mono S"
                 font.pixelSize: win.scaledSize(11)

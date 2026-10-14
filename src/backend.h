@@ -1,13 +1,17 @@
 #pragma once
 
+#include <QHash>
+#include <QSize>
 #include <QObject>
 #include <QPointer>
 #include <QByteArray>
 #include <QFileSystemWatcher>
 #include <QString>
+#include <QTextBlock>
 #include <QTimer>
 #include <QUrl>
 #include <QVariantList>
+#include <QVariantMap>
 #include <memory>
 
 #include "viewzoom.h"
@@ -31,6 +35,8 @@ class Backend : public QObject {
     Q_PROPERTY(QString themeForeground READ themeForeground NOTIFY themeColorsChanged)
     Q_PROPERTY(QString themeAccent READ themeAccent NOTIFY themeColorsChanged)
     Q_PROPERTY(QString themeSelection READ themeSelection NOTIFY themeColorsChanged)
+    Q_PROPERTY(QString themeMuted READ themeMuted NOTIFY themeColorsChanged)
+    Q_PROPERTY(QVariantList decorations READ decorations NOTIFY decorationsChanged)
 
 public:
     explicit Backend(QObject *parent = nullptr);
@@ -57,6 +63,8 @@ public:
     QString themeForeground() const { return m_themeForeground; }
     QString themeAccent() const { return m_themeAccent; }
     QString themeSelection() const { return m_themeSelection; }
+    QString themeMuted() const;
+    QVariantList decorations() const { return m_decorations; }
     static int countWords(const QString &text);
     static QString normalizedLinkUrl(const QString &clipboardText);
     static QString suggestedFileName(const QString &text);
@@ -79,9 +87,16 @@ public:
     Q_INVOKABLE bool editorTextChanged();
     Q_INVOKABLE QVariantList hiddenRangesAt(int position) const;
     Q_INVOKABLE void setSearchHighlight(const QString &query, int currentMatchStart);
-    Q_INVOKABLE void openExternalUrl(const QUrl &url);
+    Q_INVOKABLE void setEditingPosition(int position);
+    Q_INVOKABLE void setEditingRange(int cursor, int selectionStart, int selectionEnd);
+    Q_INVOKABLE QString linkAt(int position) const;
+    Q_INVOKABLE QVariantMap taskAt(int position) const;
+    Q_INVOKABLE bool toggleTask(int position);
+    Q_INVOKABLE QVariantMap imageAt(int position) const;
+    Q_INVOKABLE bool openExternalUrl(const QUrl &url);
     Q_INVOKABLE QVariantMap windowGeometry() const;
     Q_INVOKABLE void saveWindowGeometry(int x, int y, int width, int height, bool maximized);
+    Q_INVOKABLE int lastRestyleBlocks() const { return m_lastRestyleBlocks; }
 
 signals:
     void fileUrlChanged();
@@ -92,6 +107,7 @@ signals:
     void textScaleChanged();
     void zoomFactorChanged();
     void themeColorsChanged();
+    void decorationsChanged();
     void closeAfterSave();
     void openDialogRequested();
     void saveDialogRequested(const QUrl &suggestedUrl);
@@ -110,7 +126,17 @@ private:
     void refreshWordCount();
     void scheduleWordCount();
     void applyDocumentTypography();
-    void reapplyTypographyToChange();
+    void reapplyTypographyToChange(int fromBlock, int toBlock);
+    void applyBlockMetrics(QTextCursor &cursor, const QTextBlock &block);
+    void rebuildDecorations(int fromBlock = -1, int toBlock = -1);
+    void expandDecorationRange(int &fromBlock, int &toBlock) const;
+    QVariantList decorationsForRange(int fromBlock, int toBlock) const;
+    QVariantList imageDecorations() const;
+    QSize imageDisplaySize(const QVariantMap &classified) const;
+    QVariantMap classifyImageDestination(const QString &destination) const;
+    QString safeLinkTarget(const QString &destination) const;
+    QString noteRoot() const;
+    bool editingInside(const QTextBlock &block) const;
     void scheduleRecovery();
     void writeRecovery();
     void restoreRecovery();
@@ -132,9 +158,14 @@ private:
     bool m_loading = false;
     bool m_closeAfterSave = false;
     bool m_formattingTypography = false;
+    bool m_restyling = false;
     int m_formattedBlockCount = 0;
     int m_lastChangePos = 0;
     int m_lastChangeAdded = 0;
+    int m_lastChangeRemoved = 0;
+    int m_changeGeneration = 0;
+    int m_appliedGeneration = 0;
+    int m_lastRestyleBlocks = 0;
     QTimer m_wordCountTimer;
     QTimer m_recoveryTimer;
     QFileSystemWatcher m_fileWatcher;
@@ -152,4 +183,9 @@ private:
     QString m_themeAccent;
     QString m_themeSelection;
     QFileSystemWatcher m_themeWatcher;
+    int m_editingPosition = -1;
+    int m_selectionStart = -1;
+    int m_selectionEnd = -1;
+    QVariantList m_decorations;
+    mutable QHash<QString, QVariantMap> m_imageClassCache;
 };

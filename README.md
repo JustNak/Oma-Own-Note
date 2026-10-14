@@ -30,6 +30,7 @@ On Arch, `./bin/install` builds the `oma-own-note` package with `makepkg`.
 - `Ctrl+Shift+S` saves as.
 - `Ctrl+O` opens a Markdown file through the portal picker.
 - `Ctrl+P` opens the system print dialog.
+- `Ctrl+click` opens an `http`, `https`, or `mailto` link in the editor. Other link targets stay inert.
 - `Ctrl+N` opens a new Oma Own Note window.
 - `Ctrl+Z`, `Ctrl+Shift+Z`, and `Ctrl+Y` handle undo and redo.
 - `Super+F` toggles fullscreen. Qt maps this key as `Meta+F`.
