@@ -7,9 +7,11 @@ INCLUDEPATH += ../src
 SOURCES += \
     tst_oma_own_note.cpp \
     ../src/backend.cpp \
+    ../src/codeblocks.cpp \
     ../src/markdownhighlighter.cpp
 HEADERS += \
     ../src/backend.h \
+    ../src/codeblocks.h \
     ../src/markdownhighlighter.h \
     ../src/viewzoom.h
 

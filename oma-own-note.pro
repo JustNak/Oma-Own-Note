@@ -6,6 +6,7 @@ TEMPLATE = app
 
 HEADERS += \
     src/backend.h \
+    src/codeblocks.h \
     src/markdownhighlighter.h \
     src/systemtheme.h \
     src/viewzoom.h
@@ -13,6 +14,7 @@ HEADERS += \
 SOURCES += \
     src/main.cpp \
     src/backend.cpp \
+    src/codeblocks.cpp \
     src/markdownhighlighter.cpp \
     src/systemtheme.cpp
 

@@ -24,11 +24,6 @@ Item {
         pageColor.g + (textColor.g - pageColor.g) * 0.16,
         pageColor.b + (textColor.b - pageColor.b) * 0.16,
         1)
-    readonly property color bodyFill: Qt.rgba(
-        pageColor.r + (textColor.r - pageColor.r) * 0.07,
-        pageColor.g + (textColor.g - pageColor.g) * 0.07,
-        pageColor.b + (textColor.b - pageColor.b) * 0.07,
-        1)
 
     function rectAt(position) {
         var unused = chrome.layoutEpoch
@@ -110,7 +105,9 @@ Item {
                 id: imageItem
                 objectName: overlay.modelData.kind === "image" ? "imageDecoration" : ""
                 visible: !chrome.underlay && overlay.modelData.kind === "image"
-                readonly property int imageCap: 160
+                readonly property int displayWidth: overlay.modelData.displayWidth || 160
+                readonly property int displayHeight: overlay.modelData.displayHeight || 36
+                readonly property int stackOffset: overlay.modelData.stack || 0
                 readonly property rect startRect: chrome.rectAt(overlay.modelData.start)
                 readonly property bool remoteAllowed: overlay.modelData.mode === "remote"
                         && chrome.consentedRemote[overlay.modelData.remoteUrl] === true
@@ -118,9 +115,9 @@ Item {
                         ? Math.max(11, Math.round(chrome.editorItem.font.pixelSize * 0.65))
                         : 13
                 x: startRect.x
-                y: startRect.y
-                width: Math.max(160, image.paintedWidth, placeholder.implicitWidth + 16)
-                height: imageCap
+                y: startRect.y + startRect.height + stackOffset
+                width: Math.max(displayWidth, placeholder.implicitWidth + 16)
+                height: displayHeight
                 clip: true
 
                 Image {
@@ -140,10 +137,10 @@ Item {
                             return overlay.modelData.remoteUrl || ""
                         return ""
                     }
-                    sourceSize.height: imageItem.imageCap
-                    width: source === "" ? 0 : Math.min(320, sourceSize.width > 0 ? sourceSize.width : 160)
-                    height: source === "" ? 0 : Math.min(imageItem.imageCap,
-                            sourceSize.height > 0 ? sourceSize.height : imageItem.imageCap)
+                    sourceSize.width: imageItem.displayWidth
+                    sourceSize.height: imageItem.displayHeight
+                    width: source === "" ? 0 : imageItem.displayWidth
+                    height: source === "" ? 0 : imageItem.displayHeight
                 }
 
                 Rectangle {
@@ -212,7 +209,21 @@ Item {
                 x: firstPipe.x
                 y: startRect.y
                 width: Math.max(8, lastPipe.x + Math.max(1, lastPipe.width) - firstPipe.x)
-                height: Math.max(8, endRect.y + endRect.height - startRect.y)
+                // End the frame where the next block starts, which is one line
+                // box below the last row — the same stride as the rows above.
+                height: {
+                    var rows = overlay.modelData.rows || []
+                    var below = chrome.rectAt(overlay.modelData.below)
+                    var lastY = rows.length > 0 ? chrome.rectAt(rows[rows.length - 1]).y : endRect.y
+                    if (below.y > lastY + 1)
+                        return Math.max(8, below.y - startRect.y + 1)
+                    var stride = 0
+                    if (rows.length >= 2)
+                        stride = lastY - chrome.rectAt(rows[rows.length - 2]).y
+                    if (stride > 1)
+                        return Math.max(8, lastY + stride - startRect.y)
+                    return Math.max(8, endRect.y + endRect.height - startRect.y)
+                }
 
                 Rectangle {
                     visible: chrome.underlay && overlay.modelData.headerEnd >= 0
@@ -224,18 +235,6 @@ Item {
                         return Math.max(1, header.y + header.height - tableItem.y)
                     }
                     color: chrome.headerFill
-                }
-
-                Rectangle {
-                    visible: chrome.underlay
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    y: {
-                        var header = chrome.rectAt(overlay.modelData.headerEnd)
-                        return Math.max(0, header.y + header.height - tableItem.y)
-                    }
-                    height: Math.max(0, parent.height - y)
-                    color: chrome.bodyFill
                 }
 
                 Rectangle {
@@ -304,6 +303,7 @@ Item {
                 font.pixelSize: chrome.editorItem
                         ? Math.max(11, Math.round(chrome.editorItem.font.pixelSize * 0.65))
                         : 13
+                textFormat: Text.PlainText
                 text: overlay.modelData.language || ""
             }
 

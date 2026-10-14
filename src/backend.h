@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QHash>
+#include <QSize>
 #include <QObject>
 #include <QPointer>
 #include <QByteArray>
@@ -95,6 +96,7 @@ public:
     Q_INVOKABLE bool openExternalUrl(const QUrl &url);
     Q_INVOKABLE QVariantMap windowGeometry() const;
     Q_INVOKABLE void saveWindowGeometry(int x, int y, int width, int height, bool maximized);
+    Q_INVOKABLE int lastRestyleBlocks() const { return m_lastRestyleBlocks; }
 
 signals:
     void fileUrlChanged();
@@ -124,9 +126,13 @@ private:
     void refreshWordCount();
     void scheduleWordCount();
     void applyDocumentTypography();
-    void reapplyTypographyToChange();
-    void applyBlockMetrics(QTextCursor &cursor, const QTextBlock &block, bool inFence);
-    void rebuildDecorations();
+    void reapplyTypographyToChange(int fromBlock, int toBlock);
+    void applyBlockMetrics(QTextCursor &cursor, const QTextBlock &block);
+    void rebuildDecorations(int fromBlock = -1, int toBlock = -1);
+    void expandDecorationRange(int &fromBlock, int &toBlock) const;
+    QVariantList decorationsForRange(int fromBlock, int toBlock) const;
+    QVariantList imageDecorations() const;
+    QSize imageDisplaySize(const QVariantMap &classified) const;
     QVariantMap classifyImageDestination(const QString &destination) const;
     QString safeLinkTarget(const QString &destination) const;
     QString noteRoot() const;
@@ -152,9 +158,14 @@ private:
     bool m_loading = false;
     bool m_closeAfterSave = false;
     bool m_formattingTypography = false;
+    bool m_restyling = false;
     int m_formattedBlockCount = 0;
     int m_lastChangePos = 0;
     int m_lastChangeAdded = 0;
+    int m_lastChangeRemoved = 0;
+    int m_changeGeneration = 0;
+    int m_appliedGeneration = 0;
+    int m_lastRestyleBlocks = 0;
     QTimer m_wordCountTimer;
     QTimer m_recoveryTimer;
     QFileSystemWatcher m_fileWatcher;
