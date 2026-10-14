@@ -1,4 +1,7 @@
+#include <QApplication>
 #include <QtTest>
+
+#include "markdownrendertest.h"
 #include <QColor>
 #include <QFont>
 #include <QFontMetricsF>
@@ -860,5 +863,18 @@ private:
     QTemporaryDir m_settingsDirectory;
 };
 
-QTEST_MAIN(OmaOwnNoteTest)
+int main(int argc, char **argv) {
+    QApplication app(argc, argv);
+    int status = 0;
+    {
+        OmaOwnNoteTest test;
+        status |= QTest::qExec(&test, argc, argv);
+    }
+    {
+        MarkdownRenderTest test;
+        status |= QTest::qExec(&test, argc, argv);
+    }
+    return status;
+}
+
 #include "tst_oma_own_note.moc"

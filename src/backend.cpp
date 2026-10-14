@@ -32,6 +32,7 @@
 #include <algorithm>
 
 #include "markdownhighlighter.h"
+#include "markdownrenderer.h"
 
 constexpr qreal typoraLineHeightPercent = 140;
 const QString lastSaveDirectorySetting = QStringLiteral("file/lastSaveDirectory");
@@ -247,11 +248,11 @@ void Backend::open(const QUrl &url) {
     }
 
     const QByteArray contents = file.readAll();
+    setFileUrl(url);
     loadDocumentText(QString::fromUtf8(contents));
     clearRecovery();
     m_lastKnownFileContents = contents;
     m_hasKnownFileContents = true;
-    setFileUrl(url);
     watchCurrentFile();
     setModified(false);
     setStatus(QStringLiteral("Opened %1").arg(fileName()));
@@ -446,6 +447,35 @@ void Backend::openExternalUrl(const QUrl &url) {
     if (scheme == QStringLiteral("http") || scheme == QStringLiteral("https")
             || scheme == QStringLiteral("mailto"))
         QDesktopServices::openUrl(url);
+}
+
+QVariantList Backend::renderMarkdown(const QString &markdown) const {
+    const auto mix = [](const QString &fromHex, const QString &toHex, qreal amount) {
+        const QColor from(fromHex);
+        const QColor to(toHex);
+        if (!from.isValid() || !to.isValid())
+            return fromHex;
+        // Same 8% / 5% mix as MarkdownPreview.qml codeBackground.
+        return QColor::fromRgbF(from.redF() + (to.redF() - from.redF()) * amount,
+                                from.greenF() + (to.greenF() - from.greenF()) * amount,
+                                from.blueF() + (to.blueF() - from.blueF()) * amount)
+            .name(QColor::HexRgb);
+    };
+
+    MarkdownRenderOptions options;
+    options.dark = m_darkMode;
+    options.foreground = m_themeForeground;
+    options.accent = m_themeAccent;
+    options.muted = m_darkMode ? QStringLiteral("#909191") : QStringLiteral("#aeb1b5");
+    options.codeBackground = mix(m_themeBackground, m_themeForeground, m_darkMode ? 0.08 : 0.05);
+    if (m_fileUrl.isLocalFile())
+        options.baseDirectory = QFileInfo(m_fileUrl.toLocalFile()).absolutePath();
+    return MarkdownRenderer::render(markdown, options);
+}
+
+void Backend::copyPlainText(const QString &text) const {
+    if (QGuiApplication::clipboard())
+        QGuiApplication::clipboard()->setText(text);
 }
 
 QVariantMap Backend::windowGeometry() const {

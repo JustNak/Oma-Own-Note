@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            libgl-dev \
+            libegl1 \
+            libfontconfig1 \
+            libdbus-1-3 \
+            libxkbcommon0 \
+            libxkbcommon-x11-0 \
+            libxcb-cursor0 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-render-util0 \
+            libxcb-xinerama0 \
+            libxcb-xkb1 \
+            python3 \
+            python3-pip \
+            xvfb
+
+      - name: Install Qt 6.8
+        run: |
+          python3 -m pip install --user --break-system-packages aqtinstall==3.3.0
+          python3 -m aqt install-qt linux desktop 6.8.3 linux_gcc_64 \
+            -O "$RUNNER_TEMP/qt" -m qtshadertools qtimageformats
+
+      - name: Test
+        run: |
+          export PATH="$RUNNER_TEMP/qt/6.8.3/gcc_64/bin:$PATH"
+          export LD_LIBRARY_PATH="$RUNNER_TEMP/qt/6.8.3/gcc_64/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          xvfb-run -a ./bin/test
+
+      - name: Build
+        run: |
+          export PATH="$RUNNER_TEMP/qt/6.8.3/gcc_64/bin:$PATH"
+          export LD_LIBRARY_PATH="$RUNNER_TEMP/qt/6.8.3/gcc_64/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          ./bin/build
